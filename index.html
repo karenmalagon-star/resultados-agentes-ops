@@ -31,24 +31,55 @@
 </div>
 <script>
   var EDGE = "https://sbiyedqpqtiqvlgentci.supabase.co/functions/v1/dashboard";
-  document.getElementById("f").addEventListener("submit", async function (ev) {
+  var SESS_MS = 4 * 3600 * 1000;
+
+  function enter(auth) {
+    return fetch(EDGE, { headers: { "Authorization": "Basic " + auth }, cache: "no-store" })
+      .then(function (r) {
+        if (r.status === 200) {
+          return r.text().then(function (html) { document.open(); document.write(html); document.close(); return true; });
+        }
+        return false;
+      });
+  }
+
+  (function () {
+    try {
+      var s = JSON.parse(localStorage.getItem("fxsession") || "null");
+      if (s && s.auth && (Date.now() - s.ts) < SESS_MS) {
+        document.getElementById("b").disabled = true;
+        document.getElementById("b").textContent = "Entrando...";
+        enter(s.auth).then(function (ok) {
+          if (!ok) {
+            localStorage.removeItem("fxsession");
+            document.getElementById("b").disabled = false;
+            document.getElementById("b").textContent = "Entrar";
+          }
+        }).catch(function () {
+          document.getElementById("b").disabled = false;
+          document.getElementById("b").textContent = "Entrar";
+        });
+      }
+    } catch (e) {}
+  })();
+
+  document.getElementById("f").addEventListener("submit", function (ev) {
     ev.preventDefault();
     var b = document.getElementById("b"), e = document.getElementById("e");
     b.disabled = true; b.textContent = "Entrando..."; e.textContent = "";
-    try {
-      var u = document.getElementById("u").value, p = document.getElementById("p").value;
-      var r = await fetch(EDGE, { headers: { "Authorization": "Basic " + btoa(u + ":" + p) }, cache: "no-store" });
-      if (r.status === 200) {
-        var html = await r.text();
-        document.open(); document.write(html); document.close();
+    var u = document.getElementById("u").value, p = document.getElementById("p").value;
+    var auth = btoa(u + ":" + p);
+    enter(auth).then(function (ok) {
+      if (ok) {
+        try { localStorage.setItem("fxsession", JSON.stringify({ auth: auth, ts: Date.now() })); } catch (er) {}
       } else {
         e.textContent = "Usuario o contraseña incorrectos.";
         b.disabled = false; b.textContent = "Entrar";
       }
-    } catch (err) {
+    }).catch(function () {
       e.textContent = "Error de conexión. Intenta de nuevo.";
       b.disabled = false; b.textContent = "Entrar";
-    }
+    });
   });
 </script>
 </body>
