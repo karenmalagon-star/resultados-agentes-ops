@@ -1,0 +1,637 @@
+========================================================================
+PROYECTO: Dashboard de Gestion de Llamadas - "Resultados Agentes Ops"
+Fenix Ventures | Documento de memoria (TXT). Fuente unica de verdad.
+Ultima actualizacion: 2026-08-18
+========================================================================
+
+------------------------------------------------------------------------
+1. OBJETIVO
+------------------------------------------------------------------------
+Reemplazar el llenado manual (por agente/hora) de la hoja "Control llamadas".
+Las metricas se reconstruyen solas desde los timestamps que Refresh ya guarda,
+por agente, dia, media hora, pais y tienda.
+
+------------------------------------------------------------------------
+2. FUENTE DE DATOS (API de Refresh)
+------------------------------------------------------------------------
+- Es el mismo backend que usa la interfaz de Refresh (no se lee de Drive ni pantalla).
+- Base API: https://api-refresh.fenix-ventures.co/bff
+- Auth: token JWT de la sesion, guardado en el navegador:
+  IndexedDB -> base 'localforage' -> store 'keyvaluepairs' -> clave 'token'.
+  Se envia como header Authorization: Bearer <token>.
+- Ordenes: POST /bff/orders/  con body JSON de filtros:
+  { refreshOrderStatusIds:[...], startDateConfirmation, endDateConfirmation,
+    startDateCancellation, endDateCancellation, limit, offset, ... }
+  Fechas en ISO 8601 completo (ej. "2026-07-24T00:00:00.000Z").
+- Estados Refresh: UNASSIGNED (Sin asignar), ASSIGNED (Asignado),
+  REPROGRAMMED (Reprogramado), CONFIRMED (Confirmado), CANCELLED (Cancelado).
+  OJO: el codigo de reprogramado es REPROGRAMMED (RESCHEDULED da error 500).
+- Catalogo de motivos: GET /bff/rejection-reasons/
+- Reporte interno (para verificacion): GET /bff/reports/managed-orders-date/
+- NO existe /users accesible; el mapa agenteId->nombre se arma desde order.agent.
+- IMPORTANTE: los timestamps estan en HORA LOCAL de Colombia. NO restar 5h
+  (verificado: la actividad cae 7h-20h; con -5h daria 2-15h, imposible).
+
+Campos usados por orden: dropiOrderId, dropiCreationDate, confirmedAt, cancelledAt,
+agent{id,name,surname}, rejection.reasonId, client.country, dropiStore.name,
+callHistory[{date, callDuration, userId}], reprogrammedCalls[{date, agentId, clientUnreachable}].
+
+VENTANA DE EXTRACCION (actualizado 2026-07-24): se traen las ordenes cuya
+Fech. Dropi (dropiCreationDate) esta en los ULTIMOS 5 DIAS, para TODOS los estados
+(CONFIRMED, CANCELLED, REPROGRAMMED, ASSIGNED), usando el filtro startDate/endDate
+del POST /bff/orders/ (verificado: startDate/endDate == dropiCreationDate).
+Motivo (Karen): las ordenes creadas hace mas de 5 dias ya no deberian estar pendientes;
+ademas reduce el volumen (~3.400 ordenes vs ~11.000) y hace viable el refresco automatico.
+Nota: hay ~3.800 ordenes ASSIGNED viejas (algunas de 2024) "pegadas" que quedan excluidas
+por el filtro de 5 dias (correcto). Compromiso menor: gestiones de hoy sobre ordenes
+creadas hace >5 dias no se cuentan (delay tipico 1-2 dias, asi que es minimo).
+S = hoy-4 (5 dias) ; E = manana. La agregacion usa la misma ventana.
+
+------------------------------------------------------------------------
+3. DEFINICIONES DE METRICAS (todas las reglas vigentes)
+------------------------------------------------------------------------
+- Gestionadas   = confirmadas + canceladas + reprogramadas (por cambio de estado).
+- Efectividad % = (confirmadas + canceladas) / gestionadas.
+- % Cancelacion = canceladas_validas / (confirmadas + canceladas_validas).
+- % Reprogramadas = reprogramadas / gestionadas.  Reprogramada = cliente no contesta
+  (reprogrammedCalls con clientUnreachable = true).
+- Prom. llamada = suma callDuration / llamadas contestadas (dur > 0).
+- Delay = dias entre dropiCreationDate y la gestion.
+
+REGLAS ESPECIALES (todas aplicadas):
+a) MOTIVOS ESPECIALES DE CANCELACION:
+   - "Pedido de prueba": excluido por completo (no cuenta en nada).
+   - "Nueva orden" (ACTUALIZADO): la orden se reemplaza por una NUEVA que queda confirmada
+     (a veces automatica y SIN confirmedAt -> por eso el reemplazo no se contaba y la efectividad
+     bajaba). Ahora la gestion "Nueva orden" cuenta como CONFIRMADA (efectiva) del agente que la
+     trabajo, con su fecha real (cancelledAt). NO cuenta como cancelacion (no infla %cancelacion)
+     y NO aparece en los motivos. Verificado con Camilo: 83530331 y 83693198 -> ahora confirmadas.
+     Fix en sync-refresh v4 (rama de o.cx: if nm==='Nueva orden' -> evento tipo 0).
+b) ATRIBUCION DE REPROGRAMADAS: cada reprogramacion se acredita al agente que la
+   hizo (reprogrammedCalls.agentId), NO al dueno actual de la orden. (Cuando un
+   agente reprograma, la orden se desasigna y pasa a otro; la gestion es del primero.)
+c) AGENTE NULO: si una orden confirmada/cancelada trae agente NULO, se deduce del
+   historial de llamadas (callHistory.userId). Ya no aparece "(sin agente)".
+d) FILTRO DE HORA: rango [desde, hasta) -> incluye desde:00 y EXCLUYE hasta:00.
+   Ej. "14:00 a 15:00" = 14:00 y 14:30, y las 15:00 cuentan en la hora 15.
+   Limitado al horario de operacion: 6:00 a 22:00 (6am-10pm).
+e) USUARIOS EXCLUIDOS (no son agentes reales, son de los lideres):
+   "Postfecha Fenix", "Reprogramadas Operacion", "Sin gestion", "Seguimiento Historico".
+   Comparacion normalizada (sin acentos/espacios/mayusculas).
+f) CADENCIA: la actualizacion de datos es cada 30 min; la medicion es por hora.
+
+AGENTES REALES (10): Diego Plata, Denis Osorio Coba, Camilo Andres Gonzalez Quiroga,
+Lina Perez, Nataly Peralta, Carlos Julio Leon, Carlos Quintero, Daniela Farfan,
+Paula Leal, Brayan Ibanez.
+
+------------------------------------------------------------------------
+4. MODELO DE DATOS (v3, por eventos)
+------------------------------------------------------------------------
+El snapshot JSON contiene:
+- agents[], dates[], countries[], stores[], reasons[]  (listas indexadas).
+- events[]: cada gestion = [agenteIdx, tiendaIdx, paisIdx, diaIdx, mediaHora(0-47),
+  tipo(0=conf,1=canc,2=reprog), motivoIdx(-1 si no aplica), dropiOrderId].
+  TODO (KPIs, tablas, detalles, filtros) se calcula filtrando estos eventos ->
+  los filtros aplican en todas las vistas, incluida la de tienda.
+- callCube[]: [agenteIdx, diaIdx, mediaHora, paisIdx, contestadas, durSum, llamadas]
+  (para Prom. llamada).
+- delayByAgent {agenteIdx:[promedio, n, b0..b5]} y delayAll[promedio,n,b0..b5].
+mediaHora = hora*2 + (minuto>=30?1:0).  ~8.156 eventos, 81 tiendas, ventana 7 dias.
+
+------------------------------------------------------------------------
+5. FUNCIONALIDAD DEL DASHBOARD (v3)
+------------------------------------------------------------------------
+- Dos pestanas: AGENTES y TIENDAS.
+- Filtros: rango de fechas (inicio/fin), hora (desde/hasta 6-22),
+  Agente (desplegable multi-seleccion con buscador y chips),
+  Pais (desplegable multi-seleccion).
+- Panel Agentes: KPIs (Total Gest, Efectividad, %Cancelacion, %Reprogramadas,
+  Confirmadas, Canceladas, Prom. llamada, Delay); grafica efectividad vs %cancelacion;
+  actividad por franja de 30 min; tabla por agente con OJO -> detalle con dropiOrderId,
+  tipo, fecha/hora, motivo, tienda (exportable a Excel); grafica gestionadas por dia;
+  grafica de motivos.
+- Panel Tiendas: KPIs incluyendo CONTADOR de "Tiendas" (se recalcula con filtros);
+  tabla de tiendas (respeta filtros); al elegir una tienda -> detalle con KPIs,
+  motivos de cancelacion, y detalle de ordenes con "Razon de cancelacion" +
+  boton "Exportar Excel".
+- Total Gest (no "Gest"). % Cancelacion resaltado en ROJO desde 20%.
+- Exportar Excel (.xlsx) con SheetJS: vista general (hojas Agentes y Tiendas) y detalles.
+
+------------------------------------------------------------------------
+6. INFRAESTRUCTURA (Supabase)
+------------------------------------------------------------------------
+- Proyecto: "Resultados Agentes Ops"  ref = sbiyedqpqtiqvlgentci
+  Organizacion: Fenix ventures (rlmuhotpnijfbpshqgrs). Plan gratis ($0/mes).
+- Tablas:
+  * assets(key, content)   -> plantilla HTML (key='template', placeholder __DATA__).
+  * snapshot(id, created_at, data jsonb) -> datos; se usa el mas reciente.
+  * app_config(key, value) -> auth_user y auth_pw_hash (hash bcrypt via pgcrypto).
+- Funciones SQL:
+  * set_dashboard_password(p) -> fija la contrasena (la corre Karen).
+  * check_login(u,p)          -> valida usuario + contrasena.
+- Edge Function "dashboard" (verify_jwt=false, con CORS): valida Basic Auth con
+  check_login y devuelve template.replace('__DATA__', snapshot mas reciente).
+  URL API: https://sbiyedqpqtiqvlgentci.supabase.co/functions/v1/dashboard
+- Storage: bucket publico "site".
+- Credenciales:
+  Usuario: Operacionfenix*   | Clave: definida por Karen (ya NO es la temporal).
+  Para cambiarla en el futuro (SQL Editor de Supabase, comillas SIMPLES):
+    select public.set_dashboard_password('SU_NUEVA_CLAVE');
+- Seguridad: RLS activo; los escritos anon se abren solo temporalmente para cargar
+  y se cierran de inmediato. La edge function usa service role (bypassa RLS).
+
+------------------------------------------------------------------------
+7. HOSTING DE LA PAGINA DE ACCESO (limitacion + solucion)
+------------------------------------------------------------------------
+Supabase NO renderiza paginas en su dominio (antiphishing): HTML se sirve como
+text/plain y SVG como descarga. Por eso la PAGINA DE ACCESO (index.html, login de
+~2KB) debe ir en un hosting real. El backend/datos siguen en Supabase.
+- Archivo: index.html (en la carpeta de salida). Hace login contra la Edge Function
+  y muestra el dashboard (document.write).
+- Opcion elegida: GITHUB PAGES (sirve HTML correctamente y da URL publica gratis).
+- HECHO. Repo: github.com/karenmalagon-star/resultados-agentes-ops (index.html en raiz,
+  rama principal/main, Pages activo).
+  *** URL PUBLICA DEL EQUIPO (funciona, login OK):
+      https://karenmalagon-star.github.io/resultados-agentes-ops/  ***
+  Para actualizar el dashboard basta con actualizar el snapshot/plantilla en Supabase;
+  el index.html no cambia (solo hace login y trae el HTML de la edge function).
+
+------------------------------------------------------------------------
+8. VERIFICACION
+------------------------------------------------------------------------
+- Totales de extraccion vs reporte interno de Refresh (ultimos 4 dias):
+  confirmadas 1909 vs 1914, canceladas 1789 vs 1795 -> diferencia ~0.3%.
+- Doble conteo revisado (eventos vs deduplicado): practicamente identico.
+- Casos puntuales verificados con Karen: reprogramadas por agente, filtro de hora,
+  agente nulo -> Paula Leal, exclusion de usuarios no-agente.
+
+------------------------------------------------------------------------
+9. ESTADO ACTUAL Y PENDIENTES
+------------------------------------------------------------------------
+HECHO: extraccion + modelo v3 + dashboard + 7 cambios + correcciones + contador de
+tiendas + URL publica (GitHub Pages) + refresco automatico cada 30 min.
+PENDIENTE UNICO:
+- Karen debe cambiar la contrasena temporal:
+  https://supabase.com/dashboard/project/sbiyedqpqtiqvlgentci/sql/new
+  select public.set_dashboard_password('SU_CLAVE');
+
+REFRESCO AUTOMATICO 100% EN LA NUBE (final, SIN computador):
+- Refresh tiene login por API: POST /bff/auth/sign-in {email,password} -> {token}.
+- Credenciales de Refresh guardadas por Karen en app_config: refresh_email, refresh_password
+  (RLS: solo las lee la funcion con service role). Cambiarlas con insert/upsert en app_config.
+- Edge Function "sync-refresh" (verify_jwt=false, protegida con header x-write-key):
+  1) valida write_key; 2) gate por hora Colombia (corre solo 6:00-21:30; ?force=1 lo ignora);
+  3) login en Refresh; 4) extrae CONFIRMED/CANCELLED/REPROGRAMMED/ASSIGNED filtrando Fech.
+  Dropi ultimos 5 dias (startDate/endDate); 5) agrega con TODAS las reglas de la seccion 3;
+  6) inserta snapshot. Todo server-side.
+- Programacion: pg_cron + pg_net. Job 'sync-refresh-30m', cron '0,30 * * * *' (UTC) que hace
+  net.http_post a la funcion cada 30 min; la funcion decide por hora Colombia.
+- BUG CORREGIDO (v3, zona horaria): el filtro startDateConfirmation/startDateCancellation del
+  delta se armaba con last_sync en UTC real, pero Refresh guarda/filtra las marcas en hora
+  Colombia etiquetada Z (5h menos). Resultado: el filtro pedia confirmaciones/cancelaciones
+  '5h en el futuro' y NO traia las de la tarde -> Conf y Canc quedaban en 0 en la tarde
+  (reprogramadas/asignadas seguian bien porque se piden completas). Fix: a confSince se le
+  restan 5h para convertir a hora Colombia antes de usarlo en el filtro. Se reparo el hueco
+  reseteando last_sync='' (backfill completo). Al agregar filtros nuevos por FECHA a ordenes,
+  recordar SIEMPRE convertir UTC real -> hora Colombia (-5h).
+- INCREMENTAL (v2): las ordenes ya Confirmadas/Canceladas son estado FINAL, no se vuelven a
+  pedir a Refresh. Se guardan en tabla public.orders_cache (id, status, rec jsonb, created_date).
+  Cada corrida: pide a Refresh SOLO lo nuevo -> CONFIRMED/CANCELLED confirmadas/canceladas
+  DESDE last_sync (con 15 min de buffer), + REPROGRAMMED y ASSIGNED completas (no son finales).
+  Hace upsert a orders_cache, poda lo que salio de la ventana (Fech. Dropi > 5 dias) y
+  reconstruye el snapshot leyendo TODA la cache. Mapa de agentes persistente en public.agent_map.
+  Marca last_sync en app_config al terminar. Efecto medido: 1a corrida (backfill) ~5111 pedidos;
+  corridas normales ~500 (baja ~90% la carga sobre la API lenta de Refresh). El tablero sigue
+  mostrando los 5 dias completos porque se arma desde la cache, no solo desde lo recien pedido.
+- La tarea del NAVEGADOR fue ELIMINADA. La funcion de ingesta manual /functions/v1/ingest
+  sigue existiendo (por si se quiere subir datos manualmente) pero ya no se usa.
+- Probado end-to-end: pg_net -> funcion -> 200 {ok, orders ~3426}. NO depende del computador,
+  ni de la app abierta, ni del token (login fresco cada corrida).
+- MANTENIMIENTO: si cambia la contrasena de Refresh de Karen, actualizar refresh_password en
+  app_config. Si Refresh cambia el endpoint/campos del login, ajustar la funcion sync-refresh.
+
+ENLACES CLAVE:
+- URL publica del equipo: https://karenmalagon-star.github.io/resultados-agentes-ops/
+- Supabase proyecto: https://supabase.com/dashboard/project/sbiyedqpqtiqvlgentci
+- Repo GitHub: https://github.com/karenmalagon-star/resultados-agentes-ops
+
+------------------------------------------------------------------------
+10. CHANGELOG
+------------------------------------------------------------------------
+2026-07-24 v1: Ingenieria inversa de la API; modelo y 7 metricas; primer dashboard;
+  tarea horaria; snapshot en Google Sheet; HTML en Drive.
+2026-07-24 v2: 30 min; exclusion Nueva orden/Prueba; filtros fecha/hora/agente/pais;
+  detalle de tienda con motivos.
+2026-07-24 v3: dos paneles (Agentes/Tiendas); filtros Agente/Pais desplegables multi;
+  Total Gest; rojo desde 20%; ojo con IDs de orden; tienda respeta filtros; export Excel.
+  Modelo por eventos. Subido a Supabase (proyecto, DB, edge function, login).
+2026-07-24 correcciones: (a) atribucion de reprogramadas por agentId (fix efectividad
+  100%); (b) agente nulo -> callHistory; (c) filtro de hora [desde,hasta) y horario 6-22;
+  (d) exclusion de usuarios no-agente; (e) contador de tiendas que respeta filtros.
+2026-07-24 hosting: Supabase no renderiza -> URL con GitHub Pages (LISTA y probada).
+2026-07-24 refresco: funcion ingest + tarea cada 30 min (6:00-21:30). Karen cambio la
+  contrasena. Horario del filtro 6-22; corrida hasta 21:30 (opcional agregar 22:00).
+2026-07-24 fecha por defecto = HOY (inicio y fin) para monitoreo en tiempo real.
+2026-07-24 ventana de extraccion cambiada a Fech. Dropi ULTIMOS 5 DIAS (todos los
+  estados, filtro startDate/endDate). Mas liviano (~3.400 ordenes) y viable para automatico.
+  El script de la tarea programada quedo actualizado con esta logica.
+2026-07-24 AUTOMATIZACION FINAL 100% EN LA NUBE: se descubrio el login por API de Refresh
+  (/auth/sign-in). Se creo edge function "sync-refresh" que inicia sesion sola, extrae y
+  actualiza; programada con pg_cron cada 30 min. Se ELIMINO la tarea del navegador.
+  Ya NO depende del computador ni de la app abierta. Probado end-to-end (200 ok).
+  Credenciales de Refresh guardadas por Karen (opcion segura) en app_config.
+========================================================================
+
+11. PANELES NUEVOS (Lider, Efectividad de cierre, Capacidad) - EN CONSTRUCCION
+------------------------------------------------------------------------
+OBJETIVO (pedido por Karen): 3 cosas nuevas, cada una en su PROPIA PESTANA dentro del
+mismo dashboard (misma URL y login). La vista actual "Resultados" NO se toca.
+  1. Panel LIDER: carga actual por agente y tienda (ej. Nataly: total 114, Siglo21 46,
+     Goldenfy 17...) + backlog SIN ASIGNAR por tienda + ALARMAS de intento/delay.
+     Dentro de este panel va tambien CAPACIDAD OPERATIVA.
+  2. Panel EFECTIVIDAD DE CIERRE: embudo por dia/cohorte (Fech. Dropi): del dia que entran,
+     cuantas cierran dia 1/2/3 (confirmadas+canceladas DENTRO y FUERA de Refresh), % concluido,
+     pendientes, y de esas cuantas ya tuvieron 1er intento (reprogramadas). Solo tiendas
+     ACTIVAS, excluye "Sin gestion". Mide hasta cuantos dias se alarga una orden.
+  3. CAPACIDAD OPERATIVA (dentro de Lider): segun promedio de gestiones/efectividad del dia
+     anterior + backlog de la manana + INGRESO ESPERADO del dia, estima cuantos agentes se
+     necesitan.
+
+CADENCIAS acordadas:
+  - Resultados (agentes): cada 30 min (sync-refresh, ya existente, NO tocar).
+  - Lider (carga + alarmas): cada HORA.
+  - Efectividad de cierre: UNA VEZ AL DIA (con 5 dias de data, no cargar mas antiguo).
+  - Capacidad operativa: a las 8:00 a.m.
+
+HALLAZGOS de la API (sonda 'probe', se puede borrar):
+  - Estados fuera-de-app son valores propios de refreshOrderStatus:
+    CONFIRMED_OUTSIDE_OF_APP, CANCELLED_OUTSIDE_OF_APP, CANCELLED_AND_DELETED_IN_DROPI.
+    (Volumen grande: ~200 de 400 en la muestra.) De ahi salen las "gestiones fuera de Refresh".
+  - Tienda activa = order.dropiStore.isActive (true/false).
+  - order.assignedAt disponible; estado real en order.refreshOrderStatus.
+
+INFRA construida (SEPARADA del pipeline de 30 min):
+  - Tabla public.panels_cache (id, rec jsonb, created_date): foto de pendientes; se reemplaza
+    en cada corrida (DELETE + insert).
+  - Tabla public.panel_data (key, data jsonb, updated_at): guarda el resultado calculado por
+    panel; key='leader' ya poblado. La pestana del dashboard leera de aqui.
+  - Tabla public.agent_map: compartida con sync-refresh (id agente -> nombre).
+  - app_config.last_sync_panels: reservado (hoy sync-panels trae pendientes completas, sin delta).
+  - Edge function "sync-panels" (v5, verify_jwt=false, protegida x-write-key):
+      * Login server-side; gate horario Colombia 6:00-21:30 (?force=1 ignora).
+      * Ventana 5 dias (Fech. Dropi). Trae SOLO pendientes: refreshOrderStatusIds
+        [REPROGRAMMED, ASSIGNED, UNASSIGNED] (liviano; los estados fuera-de-app NO aqui,
+        van en el panel de cierre que corre 1 vez/dia).
+      * Excluye por completo agentes no reales (Sin gestion, Postfecha Fenix, Reprogramadas
+        Operacion, Seguimiento Historico) de TODO dato.
+      * LEADER load: pendientes ASSIGNED/REPROGRAMMED con agente -> por agente x tienda.
+        UNASSIGNED -> backlog "sin asignar" por tienda.
+      * ALARMAS (solo tiendas activas, ordenes ya asignadas a agente real):
+          - 'delay': 1er intento a mas de 1 dia de Fech. Dropi, o asignada sin llamar y
+            ya paso mas de 1 dia.
+          - 'gap': intentos no en dias seguidos (hueco > 1 dia).
+          - 'pend_vencida': pendiente y sin actividad hace mas de 1 dia.
+        REGLA CLAVE: "mas de un dia" SIN CONTAR DOMINGOS (funcion gapNoSun; domingo =
+        getUTCDay()===0 sobre timestamp Colombia-Z). Ej: sabado->lunes NO es alarma; viernes->lunes SI.
+      * Escribe panel_data key='leader' = {pendientes, asignadas, sin_asignar, load[],
+        unassigned[], alarms{resumen, porTiendaDia[], list[]}}.
+  - Cron 'sync-panels-hourly' = '10 * * * *' (net.http_post a sync-panels; gate horario interno).
+  - Numeros reales validados (5 dias): 3.414 pend (635 asignadas + 2.779 sin asignar),
+    8 agentes con carga; alarmas 47 delay + 0 gap + 4 pend_vencida = 51 (con domingos excluidos).
+
+VISUAL LIDER (hecho, v1):
+  - edge function "dashboard" v6: ademas del snapshot (__DATA__), ahora tambien lee
+    panel_data key='leader' y reemplaza el token __LEADERDATA__. Cambio ADITIVO: si el token
+    no existe, no pasa nada (compatible hacia atras). Verificado: sigue devolviendo 401 sin login.
+  - Plantilla (assets key='template'): se ANEXO un bloque ANTES de </body> (no se toco el
+    contenido existente). El bloque agrega: barra flotante arriba-derecha con botones
+    "Resultados"/"Lider" (funcion fxShow), y una capa #fx-lider (overlay) que renderiza desde
+    window.__LEADER__: KPIs (pendientes/asignadas/sin asignar/alarmas), tabla Carga por agente
+    (expandible por tienda, fxTog), Alarmas por tienda y dia, y Backlog sin asignar por tienda.
+    Todo con prefijo fx (clases .fxtab/.fxcard/etc y funciones fxShow/fxRender/fxEsc/fxTog) para
+    no chocar con el dashboard actual. JS validado con node --check.
+  - Para revertir el visual: quitar el bloque de assets.content (todo lo que esta entre el
+    comentario fxnav y </body>) o restaurar la plantilla; y opcional revertir dashboard a v5.
+
+MODO NOCTURNO (hecho): bloque extra anexado antes de </body> (marcador 'fxdark'). Agrega:
+  (a) <style> con overrides bajo html.fxdark que redefine las variables (--ink/--mut/--line)
+  y oscurece las superficies blancas (.card,.kpi,.controls,.tab,tabla, y el overlay #fx-lider);
+  (b) un boton luna/sol (#fxdk) que se INYECTA por JS dentro de #fxnav; (c) recuerda la
+  preferencia en localStorage('fxdark'). Aplica a Resultados y Lider. Tema oscuro real (no
+  inversion). Nota: los graficos Chart.js quedan sobre fondo oscuro; si los ejes se ven con poco
+  contraste, ajustar Chart defaults (pendiente menor). JS validado con node --check.
+
+AJUSTES v2 (feedback Karen) - hechos:
+  - sync-panels v6: se captura o.dropiOrderStatus (ds). Todo el panel Lider (carga por agente,
+    backlog sin asignar, alarmas y KPIs) ahora SOLO cuenta ordenes cuyo estado Dropi es
+    'PENDIENTE CONFIRMACION' (normalizado). Confirmado con distribucion real: 'pendiente
+    confirmacion' 2302, 'pendiente' 648, 'guia_generada' 319... Numeros filtrados: 2278 pend PC
+    -> 571 asignadas + 1707 sin asignar; 37 con delay.
+  - Alarmas reestructuradas: alarms.byStore = [{store, delay, total, orders:[{id,agent,dc,tipo,
+    dias}]}]. 'dias' = dias de atraso (gapNoSun - 1). El panel muestra total de ordenes con delay
+    y un OJITO por tienda que despliega el detalle con los dias de atraso por orden.
+  - Backlog: renombrado 'Ordenes sin asignar por tienda' con subtitulo explicando que son
+    pendientes por confirmar sin agente (el lider debe repartirlas).
+  - VISUAL rehecho limpio: se removio el bloque anterior (regexp) y se re-inserto uno nuevo que
+    usa CLASES (sin color/fondo inline en el overlay) -> el MODO NOCTURNO ahora SI aplica al
+    panel Lider. Tema dia mas suave (fondo #eaeef3, no blanco puro). Overrides dark tambien para
+    la vista Resultados (redefine --ink/--mut/--line + fondos). JS validado.
+AJUSTES v3 (feedback Karen) - hechos:
+  - BUG carga corregido: la 'carga por agente' contaba REPROGRAMMED (ej. Camilo mostraba 34 que
+    eran REPROGRAMMED). Ahora sync-panels v7 cuenta SOLO rs=ASSIGNED + ds=Pendiente Confirmacion,
+    con el agente ACTUAL (o.an), sin fallback a callHistory. Camilo -> 0 (correcto). Se agrega
+    KPI 'Reprogramadas' aparte (nReprog). Numeros: 63 asignadas / 465 reprog / 1585 sin asignar.
+  - Alarmas: se agrega columna '1er intento' (fecha) en el detalle y en el encabezado el total de
+    tiendas y ordenes con delay (resumen.tiendas_delay, resumen.ordenes_delay). Definicion de
+    'dias de atraso' en el subtitulo (dias habiles sin domingo entre Fech.Dropi+1 y 1er intento).
+  - Backlog 'sin asignar': ahora SOLO UNASSIGNED+PC que NUNCA tuvieron intento de llamada
+    (callHistory vacio), agrupado por tienda con desglose por DIA (ojito).
+  - Tema DIA mas suave (menos glare): fondos #e8eaee/#f6f7f9 (no blanco puro), texto #3a434f.
+PANEL EFECTIVIDAD DE CIERRE (hecho):
+  - Edge function "sync-cohort" (x-write-key): login, trae TODOS los estados por ventana de
+    creacion (Fech. Dropi) 5 dias (refreshOrderStatusIds:[]), filtra tiendas activas y excluye
+    Sin gestion. ~9400 ordenes/corrida (~85s). Escribe panel_data key='cohort'.
+  - Por cada dia de Fech. Dropi calcula el embudo: entered, confirmadas (int+fuera), canceladas
+    (int+fuera), cerradas, cerradasFuera, %cerrado, pend, pendLlam (pendientes con >=1 llamada),
+    pendSin, cierreAcum[] (% cerrado acumulado por dia de gestion 0..7 -> mide el 'alargue'),
+    diasProm (dias promedio para cerrar). general[] y byStore[] (por tienda, mismo embudo por dia).
+  - Cierres FUERA de Refresh incluidos via estados CONFIRMED_OUTSIDE_OF_APP /
+    CANCELLED_OUTSIDE_OF_APP / CANCELLED_AND_DELETED_IN_DROPI.
+  - Cron 'sync-cohort-daily' = '0 12 * * *' (07:00 Colombia, 1 vez/dia).
+  - Dashboard fn v7 inyecta __COHORTDATA__. Plantilla: 3a pestana 'Cierre' (#fx-cierre, render
+    fxRenderC): KPIs + tabla por dia (ojo -> cierre acumulado por dia) + por tienda (ojo -> por dia).
+  - Verificado vs ejemplo Karen: 24-jul 93% cerrado, 23-jul 97.6%, diasProm ~1. Cuadra.
+
+CAPACIDAD OPERATIVA (hecho, v2 = modelo de Karen): Edge function "sync-capacity" (solo lee DB).
+  Modelo: la IA gestiona ai_share (50%) de las ordenes; los agentes asumen el resto a calls_per_hour
+  (38) llamadas/hora, durante las horas EFECTIVAS observadas (horaInicio..horaFin sacadas del callCube
+  del snapshot: promedio de la 1a y ultima hora con llamadas por dia).
+  capacidadPorAgente = calls_per_hour * horasPorDia. workloadHumano = (backlog+ingreso)*(1-ai_share).
+  agentesNecesarios = ceil(workloadHumano/capacidadPorAgente). Compara contra agentes_actuales (7).
+  Parametros configurables en app_config: calls_per_hour, ai_share, agentes_actuales (Karen los tunea).
+  Resultado real: 7-21h (~14h) -> cap 532/agente; carga humana 2026 -> 4 agentes (hoy hay 7).
+  Cron 'sync-capacity-daily' = '0 13 * * *' (08:00 Colombia). Tarjeta al inicio del panel Lider
+  (window.__CAP__, dashboard fn v8 -> __CAPDATA__). Version anterior (productividad observada -> 27)
+  descartada.
+
+COHORTE v2 (fix feedback Karen) - hechos:
+  - Se excluyen dias FUTUROS (dc > hoy Colombia). Ya no aparece el 28.
+  - 'Pendientes' ahora = ordenes que SIGUEN en Dropi 'Pendiente Confirmacion' (isPC), NO (entered-cerradas).
+    Coincide con Refresh (ej. 23-jul: 8 pendientes, antes 47). 'Definidas' = entered - pend.
+  - 'Sin llamar' renombrado a 'Sin ninguna gestion' (pendientes con 0 intentos). 'Ya llamadas' = pend con >=1.
+  - cierreAcum[] = % DEFINIDO acumulado por dia de gestion (llega a 100% cuando pend=0) -> mide dias para cerrar.
+  - Dias prom acompanado del % en la tabla. Columna 'Fuera Refresh' quitada de la tabla (menos ruido).
+
+CIERRE v3 (feedback Karen) - hechos:
+  - Filtros de FECHA y TIENDA (dropdowns) en el panel Cierre. fxRenderC dibuja los selects y
+    fxCout() recalcula. General = todas las fechas/tiendas; se puede fijar una fecha o una tienda.
+  - RESUMEN nuevo: dias promedio para definir una orden + % definido promedio por dia de gestion
+    (Dia 1, Dia 2...). El promedio del dia-k solo usa cohortes con edad >= k (evita sesgo de dias
+    recientes que aun no maduran). dias prom ponderado por 'definidas' de cohortes con edad>=2.
+  - Se aclaro 'Pendientes' = ordenes que siguen en Pendiente Confirmacion (aun no definen).
+  - 'Sin llamar' = 'Sin ninguna gestion'.
+
+SESION 4 HORAS (hecho en index.html local, FALTA subir a GitHub Pages):
+  - index.html: al entrar guarda {auth base64, ts} en localStorage; al recargar, si han pasado
+    < 4h hace auto-login (no pide clave); si falla (clave cambiada) limpia y muestra el form.
+  - PENDIENTE: subir este index.html actualizado al repo karenmalagon-star/resultados-agentes-ops
+    (por Claude en Chrome o que Karen lo suba).
+
+AJUSTES v4 (feedback Karen) - hechos:
+  - Capacidad: la jornada del AGENTE (no la operacion de 14h) segun dia (hora Colombia):
+    Lun-Jue 7.5h, Vie 6.5h, Sab 5.5h, Dom 0. sync-capacity v4 elige por col.getUTCDay().
+    capacidadPorAgente = 38 * horasAgente. Ej. Lunes: 285/agente -> 8 agentes (hoy hay 7).
+    horaInicio/horaFin de operacion quedan solo como dato informativo.
+  - Cierre: 'Postfecha' (agente que contiene 'postfecha') YA NO se excluye del todo; se cuenta
+    APARTE por dia (columna Postfecha + KPI) y NO entra en la presion (definidas/pendientes se
+    calculan sobre gestionables = entered - postfecha). Siguen excluidos del todo: reprogramadas
+    operacion, sin gestion, seguimiento historico.
+  - Cierre: cierreAcum ahora pone null en los dias de gestion que AUN NO ocurren (offset > edad
+    del cohorte). El visual no muestra %s inventados para dias futuros.
+  - Cierre: filtro de fecha con INICIO y FIN (inputs date desde/hasta) + filtro de tienda. Resumen
+    recalcula sobre el rango.
+
+SESION 4H + VISTA COMPACTA (hechos):
+  - index.html con sesion 4h: SUBIDO al repo karenmalagon-star/resultados-agentes-ops (commit
+    'Update index.html' via Claude en Chrome). GitHub Pages lo sirve. Guarda {auth,ts} en
+    localStorage; auto-login < 4h; si falla limpia y muestra form.
+  - Vista COMPACTA en Resultados: boton 'Compacto' (se inyecta en #fxnav, junto a Modo nocturno).
+    Aplica body.fxcompact que oculta filtros (.controls) y graficas (.grid) y aprieta espaciado,
+    dejando KPIs + tabla de agentes visibles sin scroll para compartir en pantalla. Recuerda la
+    preferencia en localStorage('fxcompact'). Toggle para volver a la vista completa.
+
+AJUSTES v5 (feedback Karen) - hechos:
+  - Cierre: la columna 'Sin ninguna gestion' muestra el numero + emoji alarma (cuando > 0).
+  - Resultados > Tiendas: se agrego BUSCADOR (#stSearch), filtro por % Cancelacion minimo
+    (#stCancMin) y ORDEN (#stSort: cantidad o %cancelacion, mayor/menor). renderStores ahora
+    guarda window.__stRows y llama drawStoreTable() que filtra/ordena/dibuja segun los controles.
+  - Resultados > Agentes: metrica 'Gest/hora' (KPI grupal + columna por agente).
+    v2 (feedback Karen): por agente = gestiones / HORAS TRABAJADAS. Horas trabajadas = slots de
+    30 min con >= MINCALLS (8) llamadas (del callCube) * 0.5 -> EXCLUYE bloques parciales
+    (breaks 10/10:30/18/18:30, o 1 min pasado del turno) que distorsionan. El KPI grupal =
+    PROMEDIO de las tasas por agente (ej. Denis 40, Diego 28, Camilo 35 -> 34), no un pooled.
+    El Total Gest y demas NO cambian. MINCALLS es ajustable (hoy fijo en 8 en el codigo).
+
+PARAMETROS CONFIGURABLES en app_config (Karen los puede tunear con UPDATE):
+  calls_per_hour=38, ai_share=0.5, agentes_actuales=7. (horas por dia: fijas por codigo en
+  sync-capacity: Lun-Jue 7.5, Vie 6.5, Sab 5.5, Dom 0.)
+
+AJUSTE v6 (feedback Karen) - hechos:
+  - Cierre 'pendiente' CORREGIDO (sync-cohort v4/v5): una orden cuenta como pendiente solo si
+    refreshOrderStatus in (ASSIGNED,REPROGRAMMED,UNASSIGNED) Y dropiOrderStatus='pendiente
+    confirmacion'. Si cualquiera ya se resolvio (incluido fuera de Refresh), es DEFINIDA. Antes
+    solo miraba Dropi -> ordenes resueltas fuera de Refresh con Dropi rezagado inflaban 'sin
+    gestion'. Verificado: 6-ago pend 3 / sin gestion 0 (99.9% definido).\n  - sync-cohort acelerado: pagina de 400 -> 1000 (LIM). ~10.865 ordenes en <40s (antes se pasaba\n    de 150s y hacia timeout).\n  - INCIDENTE 10-ago: el conector MCP quedo en la ORGANIZACION equivocada -> 'no permission' en\n    todo (aunque el navegador funcionaba). Se resolvio reconectando a la organizacion Fenix Ventures.\n\nPENDIENTE (pedido Karen):\n  - HISTORIA PERMANENTE (todos los paneles): guardar el resumen real de cada dia para siempre y\n    poder consultar cualquier fecha desde la creacion (24-jul). Hay 527 snapshots (24-jul..10-ago)\n    para backfill. En construccion.\n  - Gest/hora para agentes de bajo volumen (evitar '-').
+========================================================================
+
+========================================================================
+SESION 2026-08-13 (cambios hechos)
+========================================================================
+
+HISTORIA PERMANENTE (todos los paneles) - HECHO:
+  - Tabla events_history (denormalizada): guarda para siempre los eventos reales de cada dia
+    (confirmaciones/cancelaciones/reprogramaciones) por agente/tienda/pais/media hora. Backfill
+    desde los 527 snapshots (24-jul en adelante); se hizo por lotes (6 snapshots por corrida)
+    porque hacerlo todo junto pasaba el limite de tiempo. Resultado: ~24.000 eventos, 15+ dias.
+  - build-history (edge function, v3): reconstruye histD (blob para Resultados) y cohortH (blob
+    para Cierre) uniendo el ultimo snapshot + toda la historia. CLAVE: reindexa callCube y
+    delayByAgent del snapshot a los indices de histD (agentes/dias/tiendas se renumeran al unir),
+    si no, el 'Gest/hora' salia vacio. Corregido.
+  - dashboard (edge function): sirve histD en __DATA__ (Resultados) y cohortH en __COHORTDATA__
+    (Cierre), con fallback al snapshot/cohort del dia si la historia aun no esta. Asi hoy se puede
+    consultar el resultado de cualquier fecha pasada (ej. el cierre del 01-ago con los datos de
+    ese dia) y se abrio el filtro de fecha con inicio/fin.
+  - Frecuencia: la historia se reconstruye cada 30 min (cron build-history a los minutos 10 y 40).
+    Karen pidio que la actualizacion siguiera siendo cada media hora, no cada hora.
+  - Etiqueta: en Resultados el pie dice 'Ultima actualizacion: <hora>' (antes 'generado <hora>')
+    para que NO se confunda con que los datos llegan solo hasta esa hora.
+
+REPROCESOS (nuevo, panel Lider) - HECHO:
+  - Que es: ordenes que los agentes ya llamaron, siguen en Pendiente por Confirmar y se han
+    llamado en 2+ dias distintos SIN definirse (ni confirmar ni cancelar). Son el represamiento
+    que Karen reporto: ordenes que no se concluyen, se quedan varios dias y se llaman a diario.
+  - Definicion exacta: refreshOrderStatus in (ASSIGNED,REPROGRAMMED) + dropiOrderStatus =
+    'pendiente confirmacion' + agente REAL (excluye Postfecha, Sin gestion, Reprogramadas
+    Operacion, Seguimiento historico) + llamada en >= 2 dias calendario distintos (callHistory).
+  - Se calcula en sync-panels con un SEGUNDO pull DEDICADO de ventana amplia (25 dias), porque el
+    pull normal del panel Lider es de solo 5 dias y los reprocesos son justamente ordenes de MAS
+    de 5 dias -> quedaban fuera. El pull amplio no altera los KPIs del Lider (esos siguen a 5 dias).
+  - Salida: leader.reproceso = { total, umbral:2, byDay:[{dia, count, orders:[{id, agent, store,
+    dias_llamado, primer, ultimo}]}] }. Agrupado por dia de creacion (Fech.Dropi), dia mas reciente
+    primero.
+  - UI: tarjeta 'Ordenes en reproceso' en el panel Lider (fxRender). Tabla por dia (Fech.Dropi /
+    # ordenes / ojito). El ojito abre el detalle de cada orden (Orden, Agente, Tienda, Dias
+    llamado, 1er llamada, Ult. llamada).
+  - Nota de magnitud: en una foto del momento suelen ser pocas (unidades), porque las que llegan a
+    2-3 dias se resuelven o cambian de estado rapido; es un flujo, no un stock grande. El valor es
+    atraparlas temprano (dia 2) antes de que se represen a 5+ dias.
+
+BUGS CORREGIDOS EN sync-panels (v9-v11):
+  - Paginacion fragil: cortaba con 'rows.length < 400' -> si la API devolvia una pagina parcial
+    temprano, se detenia y traia datos incompletos (a veces 1.500, a veces 13.000). Corregido:
+    limit 1000 y paginar hasta pagina vacia (of += rows.length; break solo si length===0).
+  - DELETE de panels_cache no borraba: PostgREST rechaza un DELETE sin filtro, asi que la tabla se
+    ACUMULABA (mezclaba ordenes viejas ya resueltas con las vigentes e inflaba conteos). Corregido
+    con filtro (?created_date=gte.1900-01-01) para que limpie de verdad antes de reinsertar.
+  - norm(): regex de diacriticos usa ̀-ͯ (rango unicode explicito).
+
+INCIDENTE (resuelto): el conector de Supabase quedo conectado a la ORGANIZACION equivocada ->
+  daba 'no permission' en todas las acciones aunque el navegador funcionaba. Se resolvio
+  reconectando a la organizacion correcta (Fenix Ventures).
+
+EDGE FUNCTIONS (estado): sync-refresh (incremental, Nueva orden=confirmada), sync-cohort (cohorte
+  de cierre), sync-panels v11 (Lider: carga/alarmas/sin-asignar + REPROCESO), sync-capacity
+  (capacidad), build-history v3 (historia permanente), dashboard (sirve la plantilla con datos).
+  Todas corren por cron; el token de Refresh se obtiene con las credenciales guardadas en
+  app_config (refresh_email/refresh_password). Karen las administra por SQL; nunca se piden en chat.
+
+========================================================================
+SESION 2026-08-13 (b) - Panel Lider reorganizado
+========================================================================
+  - FILTRO DE FECHAS (Desde/Hasta por Fech.Dropi) en el panel Lider. Afecta las 4 tablas de
+    detalle (no los KPIs de arriba, que son la foto global). Boton 'Limpiar' para quitar el filtro.
+  - SUB-PANELES CON PESTANAS: el panel Lider ya no es un scroll largo. Arriba quedan los KPIs y
+    Capacidad operativa (siempre visibles); abajo, pestanas para ver de a una:
+    'Carga por agente y tienda', 'Ordenes con delay', 'Ordenes sin asignar', 'Ordenes en reproceso'.
+    Cada tabla conserva su ojito de detalle y recalcula sus totales segun el filtro de fechas.
+  - Cambio de datos (sync-panels v12): se agrego leader.asignadasRows = [{agent, store, dc}] para
+    que la 'Carga por agente' se pueda filtrar por fecha en el cliente. El resto de paneles ya
+    tenian el detalle por dia/orden. Estado del filtro se guarda en window.__fxL (tab/desde/hasta).
+
+========================================================================
+SESION 2026-08-18 - Modulo HANDOFF (entrega de turno) en panel Lider
+========================================================================
+  OBJETIVO: que los lideres dejen constancia de lo pendiente al cerrar turno y que
+  NADA se pierda entre turnos. Es el primer modulo de ESCRITURA del tablero.
+
+  DATOS:
+  - Tabla public.handoff: id, created_at, autor, texto, estado(abierto/resuelto),
+    categoria, tienda, orden, prioridad(Alta/Media/Baja), informativa(bool),
+    escalado(bool)+escalado_area, es_radar(bool), resuelto_por/_nota/_at,
+    seguimiento(jsonb: [{at,autor,nota}] = avances diarios), updated_at.
+  - Tabla public.handoff_ack: acuse de turno (recibido_por, at) -> "Recibido por".
+  - Vista public.v_tiendas: tiendas distintas (de panels_cache) para el desplegable.
+  - Ejemplo sembrado: resumen de Diana Tejedor (8 pendientes, 1 marcado Radar = siglo21).
+
+  ENDPOINT (edge function 'handoff'): GET (lista items+acks+tiendas) y POST con
+  acciones create/resolve/reopen/escalate/flag(informativa|es_radar)/progress/ack.
+  Se valida con el MISMO login del dashboard (RPC check_login sobre Basic Auth);
+  escribe con service role (el navegador nunca ve llaves). CORS abierto.
+
+  SESION: la funcion dashboard inyecta window.__AUTHB64__ (la credencial Basic que ya
+  uso el usuario) + window.__HANDOFF_URL__, para que el panel pueda leer/escribir.
+
+  UI (pestana 'Handoff' en el panel Lider):
+  - Acuse de turno: "Recibido por ___" (el lider entrante confirma que leyo).
+  - Formulario: autor, categoria, tienda (desplegable/datalist), # orden, prioridad,
+    Informativa, Radar, texto.
+  - Alarma roja: pendientes NO resueltos, NO informativos, NO radar, con 2+ dias
+    CALENDARIO abiertos.
+  - Pendientes abiertos (orden por prioridad y antiguedad), cada uno con: avances
+    diarios, escalar (Tecnico/Tienda/Auditoria/SAC/Dropi/Otra texto libre; escalar NO
+    cierra), marcar informativa/radar, y Resolver (exige nombre + "en que finalizo").
+  - Radar permanente: reglas que nunca se cierran.
+  - Historial de resueltos (consultable, nada se borra).
+  - Buscar por tienda: muestra TODO el historial de esa tienda (abiertos+resueltos+radar).
+
+  REGLAS confirmadas con Karen: alarma en dias CALENDARIO; cualquier lider acciona con
+  su nombre; escalar mantiene abierto; escalado incluye opcion "Otra" con texto libre.
+
+========================================================================
+SESION 2026-08-18 (b) - Correcciones de la version con Handoff
+========================================================================
+  FIX CRITICO (login/nav rotos): al inyectar la sesion se uso el token __AUTHB64__,
+  pero ese texto aparecia DOS veces en la misma linea (window.__AUTHB64__ = __AUTHB64__;)
+  y el .replace del dashboard reemplazaba la PRIMERA ocurrencia (el nombre de la
+  variable), generando 'window."..." = ...' -> error de sintaxis que tumbaba TODO el
+  script inline. Sintoma: los botones Lider y Cierre no respondian y desaparecia el
+  boton Compacto (se inyecta por JS). Solucion: el valor a inyectar ahora usa un token
+  unico __AB64__ (window.__AUTHB64__ = __AB64__;) y el dashboard reemplaza __AB64__.
+  Leccion: nunca usar como token de reemplazo un texto que tambien sea el nombre de la
+  variable destino.
+
+  FIX visual Handoff: la tabla de pendientes usaba ancho automatico y el texto largo de
+  'Suceso' desbordaba la tarjeta (se cortaba a la derecha). Ahora las tablas del Handoff
+  usan table-layout:fixed con <colgroup> (Fecha 80px, Tienda 130px, Suceso flexible,
+  Estado 66px, ojo 34px) y las celdas de Tienda y Suceso llevan word-break:break-word,
+  de modo que el texto se ajusta en varias lineas dentro de su celda sin desbordar.
+
+  ESTADO ACTUAL (resumen de la version): panel Lider con KPIs + Capacidad fijos arriba y
+  pestanas: Carga por agente/tienda, Ordenes con delay, Ordenes sin asignar, Ordenes en
+  reproceso, y Handoff (entrega de turno). Filtro de fechas (Fech.Dropi) para las 4
+  primeras pestanas. Handoff con escritura (tabla handoff + edge function handoff), acuse
+  de turno, alarma 2+ dias calendario, radar permanente, historial y busqueda por tienda.
+
+========================================================================
+SESION 2026-08-18 (c) - Correccion GEST/HORA + orden por Delay (Resultados)
+========================================================================
+  BUG GEST/HORA (consolidado del mes salia inflado, p.ej. Daniela 1818.0):
+  - Causa: gest/hora = gestiones (de toda la HISTORIA / mes) / horas trabajadas, pero
+    las horas se calculaban del callCube, que SOLO cubre ~5 dias (ultimo snapshot). Dividir
+    gestiones del mes entre horas de 5 dias inflaba el resultado ~15x.
+  - Solucion (template, funcion render): wHours ahora se calcula desde los EVENTOS reales
+    del periodo (histD.events, que cubren todo el mes). Horas activas = 0.5 x (numero de
+    medias horas distintas -dia|mediaHora- en que el agente tuvo actividad). Asi escala con
+    el periodo y refleja el tiempo real trabajado. Aplica al KPI 'Gest/hora' y a la columna
+    por agente. Verificado: Daniela 2469 gestiones / 120 medias horas activas = 41.2 gest/h.
+  - Nota: si un agente hace llamadas que no generan evento (no-contesta no registrado como
+    reprog), sus horas activas pueden subestimarse un poco (gest/hora algo mayor), pero es
+    consistente y muy superior al metodo anterior. El umbral MINCALLS quedo obsoleto.
+
+  ORDEN POR DELAY (tabla Detalle por agente):
+  - El encabezado 'Delay' ahora es clic-eable: alterna descendente (▼) -> ascendente (▲) ->
+    orden por defecto (Total Gest desc). La tabla se re-arma con renderAgTable() sin recargar.
+  - Se extrajo el armado de la tabla de agentes a renderAgTable() + agSortDelay(); cada fila
+    precalcula gest/hora (r.gph) y delay (r.dl); nulos se muestran como '-' y ordenan al final.
+
+========================================================================
+SESION 2026-08-20 - Correcciones del brief de Daniel Plata (2do colaborador)
+========================================================================
+  CONTEXTO: Daniel reviso el proyecto desde fuera (acceso publico a GitHub) y detecto que
+  el repositorio de GitHub sigue casi vacio (solo index.html + README viejo, ultimo commit
+  28-jul): el .zip con el codigo se genero pero NUNCA se subio a GitHub. Confirmado. El
+  respaldo del codigo (Paso 2) queda pendiente del lado de Karen/Daniel (requiere su equipo).
+
+  PASO 1 - HISTORIAL AUTOMATICO DE LA PLANTILLA (hecho):
+  - Tabla public.assets_history(id, key, content, saved_at, note).
+  - Funcion public.assets_snapshot() + trigger trg_assets_history BEFORE UPDATE ON assets
+    (solo cuando old.content is distinct from new.content): guarda copia previa en cada cambio.
+  - Baseline manual insertado con la version en produccion (62.486 bytes). Verificado: el
+    trigger dispara (2 updates de prueba -> 2 copias) y la fila de prueba se limpio.
+  - BOTON DE PANICO (restaura la ultima version guardada):
+      update public.assets set content=(select content from public.assets_history
+        where key='template' order by saved_at desc limit 1) where key='template';
+  - Poda sugerida: delete from assets_history where key='template' and saved_at < now()-interval '60 days';
+
+  PASO 3 - ESCAPE DE </script> EN LA FUNCION dashboard (hecho, v13):
+  - La funcion inyectaba los datos con JSON.stringify sin escapar '<'. Si un nombre de
+    tienda/agente/motivo contenia '</script>' podia cortar el script y tumbar el tablero.
+  - Se agrego un helper inject() que escapa '<' -> < y los separadores U+2028/U+2029,
+    usado en los 4 tokens de datos (__DATA__, __LEADERDATA__, __COHORTDATA__, __CAPDATA__).
+    __AB64__ NO se toca (es base64, no puede contener '<'). Validado con round-trip y 401 sin login.
+  - CORRECCION al brief: el vector via Handoff que menciona Daniel es inexacto; el texto del
+    Handoff se trae por fetch y se pinta con fxEsc (ya escapado), NO se inyecta en la plantilla.
+    El riesgo real estaba en los nombres de __DATA__/__LEADERDATA__/__COHORTDATA__.
+
+  PASO 2 - SUBIR EL CODIGO A GITHUB: pendiente (lo hace Karen/Daniel; ver zip entregado).
+  Secciones 7 (decision de fondo) y 8 (backlog) del brief: NO ejecutadas (para conversar).

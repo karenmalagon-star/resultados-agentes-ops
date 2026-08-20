@@ -31,7 +31,7 @@
 </div>
 <script>
   var EDGE = "https://sbiyedqpqtiqvlgentci.supabase.co/functions/v1/dashboard";
-  var SESS_MS = 4 * 3600 * 1000;
+  var SESS_MS = 4 * 3600 * 1000; // la sesion dura 4 horas
 
   function enter(auth) {
     return fetch(EDGE, { headers: { "Authorization": "Basic " + auth }, cache: "no-store" })
@@ -43,6 +43,7 @@
       });
   }
 
+  // Auto-login si hay sesion valida (menos de 4 horas)
   (function () {
     try {
       var s = JSON.parse(localStorage.getItem("fxsession") || "null");
