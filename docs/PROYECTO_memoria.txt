@@ -635,3 +635,49 @@ SESION 2026-08-20 - Correcciones del brief de Daniel Plata (2do colaborador)
 
   PASO 2 - SUBIR EL CODIGO A GITHUB: pendiente (lo hace Karen/Daniel; ver zip entregado).
   Secciones 7 (decision de fondo) y 8 (backlog) del brief: NO ejecutadas (para conversar).
+
+========================================================================
+SESION 2026-08-26 - Robustez de syncs + renombre Delay (Daniel, via PR)
+========================================================================
+  CONTEXTO: Daniel Plata entro como segundo colaborador (acceso a Supabase org
+  Fenix Ventures + collaborator del repo). Desde esta sesion los cambios entran
+  por Pull Request para revision de Karen.
+
+  DESPLEGADO EN PRODUCCION (verificado con corrida real):
+  - sync-refresh v6 y sync-cohort v7: los errores HTTP de la API de Refresh ya
+    NO se tragan en silencio. Se acumulan en PULL_ERR y la respuesta incluye
+    pull_err[] y ok:false si hubo alguno. Antes, una corrida a medias reportaba
+    ok:true con datos incompletos. Verificado: ok:true, pull_err:[], cache 4372.
+  - sync-refresh ademas queda con la paginacion robusta (limit 1000, corta solo
+    en pagina vacia, avanza por rows.length) que Karen ya habia puesto en vivo;
+    este PR sincroniza el repo con ese codigo real.
+  - Plantilla (assets key='template'), renombres pedidos por Daniel P.:
+    pestana/tabla del Lider 'Ordenes con delay' -> 'Dias de demora por tienda',
+    columna 'Con delay' -> 'Con demora'; subtitulo del KPI Delay de Resultados
+    'desde Dropi' -> 'hasta definir la orden'. Motivo: el 'Delay' de Resultados
+    (dias calendario hasta definir la orden, domingos incluidos) y el del Lider
+    (dias habiles sin domingo hasta el 1er intento) son metricas DISTINTAS con
+    el mismo nombre; se renombraron para que no se confundan.
+  - Red de seguridad previa (sesion 20-ago): trigger trg_assets_history guarda
+    copia automatica de la plantilla antes de cada cambio; boton de panico:
+    update assets set content=(select content from assets_history where
+    key='template' order by saved_at desc limit 1) where key='template';
+
+  TRAMPA NUEVA DOCUMENTADA (causa raiz de los 'no permission' de agosto):
+  - Existen DOS organizaciones de Supabase llamadas "Fenix Ventures": la de
+    Karen (rlmuhotpnijfbpshqgrs, donde vive este proyecto) y una personal de
+    Daniel (obxuvsacoexlvvtxghaj). Verificar el conector por NOMBRE de la org
+    no sirve. La verificacion correcta es por proyecto: debe aparecer el ref
+    sbiyedqpqtiqvlgentci en la lista de proyectos del conector.
+
+  ANALISIS DE REGLAS DE NEGOCIO (fuera del repo, en curso):
+  - Se extrajeron 359 reglas de las 10 fuentes del sistema y se detectaron 10
+    reglas transversales con implementaciones DIVERGENTES entre funciones y 9
+    casos donde la documentacion no coincide con el codigo. Pendiente: sesion
+    de validacion con Karen (cuestionario preparado por Daniel).
+  - Decisiones registradas: migracion fuera de Refresh ~45 dias (oct-2026);
+    la plantilla sale de la BD a archivos EN esa migracion; postfecha se
+    documenta como regla de negocio (gestion pactada a futuro, no exclusion
+    arbitraria); validacion de la migracion contra fotos congeladas de
+    events_history (las tiendas que eliminan su integracion desaparecen de
+    Refresh: los datos guardados son la unica copia de su pasado).

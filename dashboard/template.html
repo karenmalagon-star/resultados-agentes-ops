@@ -97,7 +97,7 @@ function render(){
  var avg=ca.ans?ca.dur/ca.ans:0;
  var del=D.delayAll;if(f.ag.size){del=[0,0,0,0,0,0,0,0];var sw=0;f.ag.forEach(function(i){var d=D.delayByAgent[i];if(d){for(var k=1;k<8;k++)del[k]+=d[k];sw+=d[0]*d[1];}});del[0]=del[1]?sw/del[1]:0;}
  var slotEv={};evs.forEach(function(e){var k=e[0],sk=e[3]+'|'+e[4];(slotEv[k]=slotEv[k]||{});slotEv[k][sk]=1;});function wHours(a){var m=slotEv[a];if(!m)return 0;var n=0;for(var s in m){n++;}return n*0.5;}var gestByA={};evs.forEach(function(e){gestByA[e[0]]=(gestByA[e[0]]||0)+1;});var _rates=[];Object.keys(gestByA).forEach(function(a){var wh=wHours(+a);if(wh>0)_rates.push(gestByA[a]/wh);});var gPerH=_rates.length?_rates.reduce(function(s,x){return s+x;},0)/_rates.length:0;
- var kp=[['Total Gest',fmt(t.gest),''],['Gest/hora',gPerH.toFixed(1),'prom. por agente'],['Efectividad',t.efec.toFixed(1)+'%','conf+canc'],['% Cancelación',t.cancPct.toFixed(1)+'%','excl. nueva orden/prueba'],['% Reprogramadas',t.reprogPct.toFixed(1)+'%','no contesta'],['Confirmadas',fmt(t.conf),''],['Canceladas',fmt(t.canc),'válidas'],['Prom. llamada',mmss(avg),'contestadas'],['Delay prom.',(+del[0]).toFixed(1)+' d','desde Dropi']];
+ var kp=[['Total Gest',fmt(t.gest),''],['Gest/hora',gPerH.toFixed(1),'prom. por agente'],['Efectividad',t.efec.toFixed(1)+'%','conf+canc'],['% Cancelación',t.cancPct.toFixed(1)+'%','excl. nueva orden/prueba'],['% Reprogramadas',t.reprogPct.toFixed(1)+'%','no contesta'],['Confirmadas',fmt(t.conf),''],['Canceladas',fmt(t.canc),'válidas'],['Prom. llamada',mmss(avg),'contestadas'],['Delay prom.',(+del[0]).toFixed(1)+' d','hasta definir la orden']];
  document.getElementById('kpis').innerHTML=kp.map(function(k){return '<div class="kpi"><div class="v">'+k[1]+'</div><div class="l">'+k[0]+'</div>'+(k[2]?'<small>'+k[2]+'</small>':'')+'</div>';}).join('');
  // per agent
  var byA={};evs.forEach(function(e){var a=e[0];(byA[a]=byA[a]||[]).push(e);});
@@ -262,7 +262,7 @@ function fxLbody(){
  h+='<span class=fxsub style="margin:0">Hasta</span><input type=date class=fxsel id=fxld2 value="'+s.hasta+'" onchange="fxLdate()">';
  h+='<button class="fxtab" style="border:1px solid #d7dce3" onclick="fxLclear()">Limpiar</button>';
  h+='<span class=fxsub style="margin:0">Afecta las tablas de abajo.</span></div>';}
- var tabs=[['carga','Carga por agente y tienda'],['delay','Ordenes con delay'],['sinasig','Ordenes sin asignar'],['reproceso','Ordenes en reproceso'],['handoff','Handoff (entrega de turno)']];
+ var tabs=[['carga','Carga por agente y tienda'],['delay','Días de demora por tienda'],['sinasig','Ordenes sin asignar'],['reproceso','Ordenes en reproceso'],['handoff','Handoff (entrega de turno)']];
  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px;border-bottom:1px solid #e3e6ea;padding-bottom:8px">';
  tabs.forEach(function(t){h+='<button class="fxtab'+(s.tab===t[0]?' fxon':'')+'" onclick="fxLtab(\''+t[0]+'\')">'+t[1]+'</button>';});
  h+='</div>';
@@ -293,7 +293,7 @@ function fxDelay(){
  var d=window.__LEADER__||{};var al=d.alarms||{byStore:[]};
  var arr=(al.byStore||[]).map(function(s){var os=(s.orders||[]).filter(function(o){return fxIn(o.dc);});var dl=0;os.forEach(function(o){if(o.tipo==='delay')dl++;});return{store:s.store,orders:os,delay:dl,total:os.length};}).filter(function(s){return s.total>0;}).sort(function(a,b){return (b.delay-a.delay)||(b.total-a.total);});
  var td=arr.length,od=0;arr.forEach(function(s){od+=s.delay;});
- var h='<div class=fxcard><h3>Ordenes con delay por tienda</h3><p class=fxsub><b>'+td+'</b> tiendas &middot; <b>'+od+'</b> ordenes con delay. Atraso = dias habiles (sin domingo) entre el plazo (Fech.Dropi + 1 dia) y el 1er intento. Clic en el ojo para el detalle.</p><table><thead><tr><th>Tienda</th><th style="text-align:right">Con delay</th><th style="text-align:right">Total alarmas</th><th></th></tr></thead><tbody>';
+ var h='<div class=fxcard><h3>Días de demora por tienda</h3><p class=fxsub><b>'+td+'</b> tiendas &middot; <b>'+od+'</b> ordenes con delay. Atraso = dias habiles (sin domingo) entre el plazo (Fech.Dropi + 1 dia) y el 1er intento. Clic en el ojo para el detalle.</p><table><thead><tr><th>Tienda</th><th style="text-align:right">Con demora</th><th style="text-align:right">Total alarmas</th><th></th></tr></thead><tbody>';
  arr.forEach(function(s,i){
   h+='<tr class=fxexp onclick="fxTog(\'fxs\','+i+')"><td>'+fxEsc(s.store)+'</td><td style="text-align:right"><span class="fxpill fxred">'+s.delay+'</span></td><td style="text-align:right">'+s.total+'</td><td style="text-align:right"><span class=fxeye>&#128065;</span></td></tr>';
   h+='<tr id="fxs'+i+'" style="display:none"><td colspan=4 class=fxdet style="padding:0"><table><thead><tr><th>Orden</th><th>Agente</th><th>Fech. Dropi</th><th>1er intento</th><th>Tipo</th><th style="text-align:right">Dias atraso</th></tr></thead><tbody>';

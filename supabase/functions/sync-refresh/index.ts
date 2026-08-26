@@ -52,14 +52,18 @@ Deno.serve(async (req: Request) => {
 
     const amRun: Record<string, string> = {};
     const CACHE_ROWS: any[] = [];
+    // Errores HTTP de la API: se acumulan y se reportan (antes se tragaban en silencio).
+    const PULL_ERR: string[] = [];
     async function pull(st: string[], extra: any) {
       let of = 0;
-      for (let pg = 0; pg < 30; pg++) {
-        const b: any = { dropiStoreIds: [], dropiOrderStatusIds: [], refreshOrderStatusIds: st, agentIds: [], dropiOrderIds: [], limit: 400, offset: of, startDate: S, endDate: E, ...extra };
+      // Paginacion robusta: recorrer hasta pagina vacia (NO cortar en pagina parcial).
+      for (let pg = 0; pg < 40; pg++) {
+        const b: any = { dropiStoreIds: [], dropiOrderStatusIds: [], refreshOrderStatusIds: st, agentIds: [], dropiOrderIds: [], limit: 1000, offset: of, startDate: S, endDate: E, ...extra };
         const r = await fetch(`${REFRESH}/orders/`, { method: "POST", headers: H, body: JSON.stringify(b) });
-        if (r.status !== 200) return;
+        if (r.status !== 200) { PULL_ERR.push(st.join(",") + " pg" + pg + " http" + r.status); return; }
         const j: any = await r.json();
         const rows = j.orders || [];
+        if (rows.length === 0) break;
         for (const o of rows) {
           if (o.agent && o.agent.id) amRun[o.agent.id] = ((o.agent.name || "") + " " + (o.agent.surname || "")).trim();
           if (o.dropiOrderId == null) continue;
@@ -67,8 +71,7 @@ Deno.serve(async (req: Request) => {
           const cd = o.dropiCreationDate ? String(o.dropiCreationDate).slice(0, 10) : S_date;
           CACHE_ROWS.push({ id: rec.id, status: st[0], rec, created_date: cd });
         }
-        if (rows.length < 400) break;
-        of += 400;
+        of += rows.length;
       }
     }
     await pull(["CONFIRMED"], { startDateConfirmation: confSince, endDateConfirmation: E });
@@ -139,7 +142,7 @@ Deno.serve(async (req: Request) => {
     const data = { meta: { start: S, end: E, orders: OO.length, gen: new Date().toISOString() }, agents, dates, countries, stores, reasons, events, callCube: callC, delayByAgent: dba, delayAll: [+(dA.s / dA.n).toFixed(2), dA.n, ...dA.b] };
 
     await fetch(`${SURL}/rest/v1/snapshot`, { method: "POST", headers: { ...DBH, Prefer: "return=minimal" }, body: JSON.stringify({ data }) });
-    return json({ ok: true, cache: OO.length, nuevos: urows.length, eventos: events.length, agentes: agents.length, dias: dates });
+    return json({ ok: PULL_ERR.length === 0, pull_err: PULL_ERR, cache: OO.length, nuevos: urows.length, eventos: events.length, agentes: agents.length, dias: dates });
   } catch (e) {
     return json({ error: String(e) }, 500);
   }

@@ -42,13 +42,17 @@ Deno.serve(async (req: Request) => {
     const LIM = 1000;
 
     const O: any[] = [];
+    // Errores HTTP de la API: se acumulan y se reportan (antes se tragaban en silencio).
+    const PULL_ERR: string[] = [];
     let of = 0;
+    // Paginacion robusta: recorrer hasta pagina vacia (NO cortar en pagina parcial).
     for (let pg = 0; pg < 40; pg++) {
       const b: any = { dropiStoreIds: [], dropiOrderStatusIds: [], refreshOrderStatusIds: [], agentIds: [], dropiOrderIds: [], limit: LIM, offset: of, startDate: S, endDate: E };
       const r = await fetch(`${REFRESH}/orders/`, { method: "POST", headers: H, body: JSON.stringify(b) });
-      if (r.status !== 200) break;
+      if (r.status !== 200) { PULL_ERR.push("pg" + pg + " http" + r.status); break; }
       const j: any = await r.json();
       const rows = j.orders || [];
+      if (rows.length === 0) break;
       for (const o of rows) {
         if (o.dropiOrderId == null || !o.dropiCreationDate) continue;
         const dcd = dayIdx(o.dropiCreationDate);
@@ -60,8 +64,7 @@ Deno.serve(async (req: Request) => {
         const pf = an.indexOf("postfecha") >= 0;
         O.push({ dc: dcd, pf, rs: o.refreshOrderStatus, ds: norm(o.dropiOrderStatus || ""), cf: o.confirmedAt, cx: o.cancelledAt, calls: (o.callHistory || []).length, st: o.dropiStore ? o.dropiStore.name : "(sin tienda)" });
       }
-      if (rows.length < LIM) break;
-      of += LIM;
+      of += rows.length;
     }
 
     function mkBucket(dc: number) { return { dc: ymd(dc), dcIdx: dc, entered: 0, postfecha: 0, definidas: 0, definidasFuera: 0, pend: 0, pendLlam: 0, pendSin: 0, cierre: new Array(MAXOFF + 1).fill(0), sumOff: 0, nOff: 0 }; }
@@ -101,6 +104,6 @@ Deno.serve(async (req: Request) => {
 
     const cohort = { gen: nowISO, start: S.slice(0, 10), end: todayStr, maxOff: MAXOFF, general: genArr, byStore: storeArr };
     await fetch(`${SURL}/rest/v1/panel_data`, { method: "POST", headers: { ...DBH, Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ key: "cohort", data: cohort, updated_at: nowISO }) });
-    return json({ ok: true, ordenes: O.length, dias: genArr.map((g: any) => ({ dc: g.dc, entered: g.entered, postfecha: g.postfecha, definidas: g.definidas, pct: g.pct, pend: g.pend, pendSin: g.pendSin, diasProm: g.diasProm })), tiendas: storeArr.length });
+    return json({ ok: PULL_ERR.length === 0, pull_err: PULL_ERR, ordenes: O.length, dias: genArr.map((g: any) => ({ dc: g.dc, entered: g.entered, postfecha: g.postfecha, definidas: g.definidas, pct: g.pct, pend: g.pend, pendSin: g.pendSin, diasProm: g.diasProm })), tiendas: storeArr.length });
   } catch (e) { return json({ error: String(e) }, 500); }
 });
