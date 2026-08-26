@@ -681,3 +681,39 @@ SESION 2026-08-26 - Robustez de syncs + renombre Delay (Daniel, via PR)
     arbitraria); validacion de la migracion contra fotos congeladas de
     events_history (las tiendas que eliminan su integracion desaparecen de
     Refresh: los datos guardados son la unica copia de su pasado).
+
+========================================================================
+SESION 2026-08-26 (b) - Sistema de ALERTAS POR CORREO (monitor-salud)
+========================================================================
+  QUE ES: si el tablero deja de actualizarse o una corrida falla, le llega un
+  correo a Karen (karen.malagon@fenixventures.co). Antes las fallas eran
+  invisibles: quedaban registradas pero nadie recibia aviso.
+
+  EVIDENCIA DE LA NECESIDAD (mismo dia): el cron de sync-panels fue rechazado
+  con 401 'unauthorized' 4 veces (5:10, 6:10, 7:10 y 10:10 hora Colombia) y el
+  panel Lider quedo congelado por ratos sin que nadie lo notara. Hipotesis de
+  causa: cfg('write_key') devuelve '' ante un fallo transitorio leyendo
+  app_config y la funcion lo confunde con llave invalida (401 enganoso).
+  PENDIENTE: dar reintento a cfg() en todas las funciones (monitor-salud ya lo
+  tiene) y distinguir 'config ilegible' (503) de 'llave mala' (401).
+
+  PIEZAS:
+  - RPC public.monitor_checks() (schema.sql): devuelve lista de problemas.
+    Chequea (1) frescura del snapshot (>75 min), (2) frescura de cada panel
+    (leader>150, histD/cohortH>75, cohort/capacity>26h), (3) corridas de los
+    ultimos 35 min con HTTP != 200, error o '"ok":false'. Solo service_role.
+  - Edge Function monitor-salud: corre por cron '15,45 * * * *'; gate horario
+    7:45-22:00 Colombia; anti-spam (misma alerta max cada 4 h); manda correo
+    de '✅ normalizado' cuando el problema desaparece. ?test=1 = correo de prueba.
+  - Workflow N8N 'Alerta Dashboard Ops -> correo Karen' (instancia
+    danielplatav.app.n8n.cloud, proyecto de equipo): webhook POST
+    /alerta-dashboard-ops -> valida token compartido -> Gmail a Karen.
+    El token vive en app_config (alert_token) y dentro del workflow; NO en el repo.
+  - Config en app_config: alert_webhook_url, alert_token, monitor_state.
+
+  PROBADO END-TO-END: monitor?test=1 -> webhook -> Gmail 'SENT' (ejecucion
+  n8n 19738, success). Karen recibe un correo marcado PRUEBA.
+
+  ADVERTENCIA DE DEPENDENCIA: el envio pasa por el n8n de la cuenta de Daniel
+  (danielplatav.app.n8n.cloud) con la credencial Gmail del proyecto de equipo.
+  Sumar a la conversacion de centralizar cuentas.

@@ -73,3 +73,14 @@ select cron.schedule('cohort-history-append', '30 12 * * *', $$
   from g full join s on g.dc=s.dc
   on conflict (dc) do update set general=excluded.general, by_store=excluded.by_store, updated_at=now();
 $$);
+
+-- monitor-salud: vigila frescura de datos y corridas fallidas; avisa por correo (cada 30 min)
+-- Nota: este patron lee la write_key de app_config en tiempo de ejecucion (no queda embebida).
+select cron.schedule('monitor-salud-30m', '15,45 * * * *', $$
+  select net.http_post(
+    url := 'https://sbiyedqpqtiqvlgentci.supabase.co/functions/v1/monitor-salud',
+    headers := jsonb_build_object('Content-Type','application/json',
+               'x-write-key', (select value from app_config where key='write_key')),
+    body := '{}'::jsonb,
+    timeout_milliseconds := 60000);
+$$);

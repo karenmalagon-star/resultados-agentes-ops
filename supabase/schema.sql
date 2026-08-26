@@ -143,3 +143,62 @@ create trigger trg_assets_history
   for each row
   when (old.content is distinct from new.content)
   execute function public.assets_snapshot();
+
+-- ============================================================
+-- monitor_checks(): chequeo de salud del dashboard (2026-08-26)
+-- Lo consume la Edge Function monitor-salud. Solo service_role.
+-- ============================================================
+create or replace function public.monitor_checks()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  problemas jsonb := '[]'::jsonb;
+  v_snap timestamptz;
+  v_age numeric;
+  r record;
+  fallas jsonb;
+begin
+  select max(created_at) into v_snap from public.snapshot;
+  v_age := extract(epoch from now() - v_snap) / 60;
+  if v_snap is null or v_age > 75 then
+    problemas := problemas || jsonb_build_array(
+      'La vista Resultados no se actualiza hace ' || coalesce(round(v_age)::text, '?') ||
+      ' minutos (última: ' || coalesce(to_char(v_snap at time zone 'America/Bogota', 'YYYY-MM-DD HH24:MI'), 'nunca') || ' hora Colombia).');
+  end if;
+  for r in
+    select key, updated_at, extract(epoch from now() - updated_at) / 60 as age_min,
+           case key when 'leader' then 150 when 'histD' then 75 when 'cohortH' then 75
+                    when 'cohort' then 1560 when 'capacity' then 1560 end as umbral
+    from public.panel_data
+    where key in ('leader', 'histD', 'cohortH', 'cohort', 'capacity')
+  loop
+    if r.age_min > r.umbral then
+      problemas := problemas || jsonb_build_array(
+        'El panel "' || r.key || '" no se actualiza hace ' || round(r.age_min) ||
+        ' minutos (última: ' || to_char(r.updated_at at time zone 'America/Bogota', 'YYYY-MM-DD HH24:MI') || ' hora Colombia).');
+    end if;
+  end loop;
+  select jsonb_agg(
+    'Corrida fallida a las ' || to_char(created at time zone 'America/Bogota', 'HH24:MI') ||
+    ' (hora Colombia): HTTP ' || coalesce(status_code::text, '?') || ' — ' ||
+    coalesce(left(content::text, 150), coalesce(error_msg, 'sin detalle')))
+  into fallas
+  from net._http_response
+  where created > now() - interval '35 minutes'
+    and (status_code is distinct from 200 or error_msg is not null or content::text like '%"ok":false%');
+  if fallas is not null then problemas := problemas || fallas; end if;
+  return problemas;
+end $fn$;
+
+revoke execute on function public.monitor_checks() from public;
+revoke execute on function public.monitor_checks() from anon;
+revoke execute on function public.monitor_checks() from authenticated;
+grant execute on function public.monitor_checks() to service_role;
+
+-- Config del sistema de alertas (valores reales solo en la BD, nunca en el repo):
+--   alert_webhook_url : URL del webhook de N8N que envia el correo
+--   alert_token       : secreto compartido que valida el webhook
+--   monitor_state     : estado interno anti-spam del monitor (lo maneja la funcion)
