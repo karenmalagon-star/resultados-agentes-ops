@@ -717,3 +717,37 @@ SESION 2026-08-26 (b) - Sistema de ALERTAS POR CORREO (monitor-salud)
   ADVERTENCIA DE DEPENDENCIA: el envio pasa por el n8n de la cuenta de Daniel
   (danielplatav.app.n8n.cloud) con la credencial Gmail del proyecto de equipo.
   Sumar a la conversacion de centralizar cuentas.
+
+========================================================================
+SESION 2026-08-26 (c) - Fix 401 enganoso + alertas con nombre de funcion
+========================================================================
+  FIX '401 ENGANOSO' (todas las funciones de cron, desplegado):
+  - Causa raiz de los rechazos intermitentes del cron (4 veces el 26-ago):
+    cfg('write_key') devolvia '' ante un fallo transitorio leyendo app_config
+    y la funcion lo confundia con llave invalida -> 401 'unauthorized'.
+  - Arreglo: cfg() ahora reintenta 3 veces (con espera de 500 ms) y solo
+    devuelve '' si de verdad no pudo leer; y el chequeo de auth distingue
+    'config no disponible (transitorio)' (503) de 'llave mala' (401).
+  - Desplegado en: sync-refresh v7, sync-panels v13, sync-cohort v8,
+    sync-capacity v5, build-history v4, monitor-salud v2.
+
+  ALERTAS CON NOMBRE DE FUNCION:
+  - Tabla public.cron_calls (req_id, fn, at): cada cron registra que funcion
+    disparo cada llamada (net._http_response no guarda la URL).
+  - Los 6 crons HTTP se recrearon con ese registro y con la write_key leida
+    de app_config EN TIEMPO DE EJECUCION (ya no queda embebida en cron.job).
+  - monitor_checks v2: las alertas dicen la FUNCION que fallo y usan nombres
+    amigables de panel (LIDER, CIERRE, CAPACIDAD...), no las keys internas.
+  - monitor-salud v2: el correo dice 'proyecto "Resultados Agentes Ops"' en
+    vez del codigo del proyecto.
+
+  REMITENTE DE LAS ALERTAS (en curso):
+  - Las credenciales Gmail del proyecto de equipo del n8n resultaron ser el
+    buzon de Lexi (academialexi@gmail.com) -> descartadas por pedido de Daniel.
+  - El workflow se recreo en el proyecto personal de Daniel del n8n con SU
+    credencial Gmail (buzon Fenix), workflow xAi5IiqLqhXh8nLL; la URL del
+    webhook no cambio. PENDIENTE: la credencial 'Gmail account' esta vencida
+    y Daniel debe reconectarla en n8n (OAuth); luego se prueba end-to-end y
+    se pone a Karen como destinataria.
+  - Mejora: el webhook ahora responde DESPUES de enviar (responseMode
+    lastNode): si Gmail falla, el monitor lo detecta y reintenta.

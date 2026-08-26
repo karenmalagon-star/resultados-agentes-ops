@@ -7,15 +7,23 @@ const REFRESH = "https://api-refresh.fenix-ventures.co/bff";
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
 
 async function cfg(key: string): Promise<string> {
-  const r = await fetch(`${SURL}/rest/v1/app_config?key=eq.${encodeURIComponent(key)}&select=value`, { headers: DBH });
-  const j = await r.json();
-  return (j && j[0] && j[0].value) || "";
+  // Con reintento: un fallo transitorio leyendo app_config no debe confundirse con llave invalida.
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetch(`${SURL}/rest/v1/app_config?key=eq.${encodeURIComponent(key)}&select=value`, { headers: DBH });
+      const j = await r.json();
+      if (Array.isArray(j)) return (j[0] && j[0].value) || "";
+    } catch (_) { /* reintenta */ }
+    await new Promise((res) => setTimeout(res, 500));
+  }
+  return "";
 }
 
 Deno.serve(async (req: Request) => {
   const wk = req.headers.get("x-write-key") || "";
   const stored = await cfg("write_key");
-  if (!stored || wk !== stored) return json({ error: "unauthorized" }, 401);
+  if (!stored) return json({ error: "config no disponible (transitorio)" }, 503);
+  if (wk !== stored) return json({ error: "unauthorized" }, 401);
 
   const url = new URL(req.url);
   const force = url.searchParams.get("force") === "1";

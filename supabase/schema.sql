@@ -145,9 +145,18 @@ create trigger trg_assets_history
   execute function public.assets_snapshot();
 
 -- ============================================================
--- monitor_checks(): chequeo de salud del dashboard (2026-08-26)
--- Lo consume la Edge Function monitor-salud. Solo service_role.
+-- Sistema de alertas (2026-08-26)
 -- ============================================================
+-- Registro de que funcion dispara cada llamada de cron (las alertas dicen QUE fallo)
+create table if not exists public.cron_calls (
+  req_id bigint primary key,
+  fn     text not null,
+  at     timestamptz not null default now()
+);
+revoke all on public.cron_calls from anon;
+revoke all on public.cron_calls from authenticated;
+
+-- monitor_checks(): chequeo de salud. Lo consume la Edge Function monitor-salud.
 create or replace function public.monitor_checks()
 returns jsonb
 language plpgsql
@@ -165,30 +174,40 @@ begin
   v_age := extract(epoch from now() - v_snap) / 60;
   if v_snap is null or v_age > 75 then
     problemas := problemas || jsonb_build_array(
-      'La vista Resultados no se actualiza hace ' || coalesce(round(v_age)::text, '?') ||
-      ' minutos (última: ' || coalesce(to_char(v_snap at time zone 'America/Bogota', 'YYYY-MM-DD HH24:MI'), 'nunca') || ' hora Colombia).');
+      'La vista RESULTADOS no se actualiza hace ' || coalesce(round(v_age)::text, '?') ||
+      ' minutos (última: ' || coalesce(to_char(v_snap at time zone 'America/Bogota', 'YYYY-MM-DD HH24:MI'), 'nunca') ||
+      ' hora Colombia). Falla probable: la función sync-refresh o su tarea programada.');
   end if;
   for r in
     select key, updated_at, extract(epoch from now() - updated_at) / 60 as age_min,
            case key when 'leader' then 150 when 'histD' then 75 when 'cohortH' then 75
-                    when 'cohort' then 1560 when 'capacity' then 1560 end as umbral
+                    when 'cohort' then 1560 when 'capacity' then 1560 end as umbral,
+           case key when 'leader'  then 'panel LÍDER (función sync-panels)'
+                    when 'histD'   then 'historia de RESULTADOS (función build-history)'
+                    when 'cohortH' then 'historia de CIERRE (función build-history)'
+                    when 'cohort'  then 'vista CIERRE (función sync-cohort)'
+                    when 'capacity' then 'CAPACIDAD OPERATIVA (función sync-capacity)' end as nombre
     from public.panel_data
     where key in ('leader', 'histD', 'cohortH', 'cohort', 'capacity')
   loop
     if r.age_min > r.umbral then
       problemas := problemas || jsonb_build_array(
-        'El panel "' || r.key || '" no se actualiza hace ' || round(r.age_min) ||
+        'El ' || r.nombre || ' no se actualiza hace ' || round(r.age_min) ||
         ' minutos (última: ' || to_char(r.updated_at at time zone 'America/Bogota', 'YYYY-MM-DD HH24:MI') || ' hora Colombia).');
     end if;
   end loop;
   select jsonb_agg(
-    'Corrida fallida a las ' || to_char(created at time zone 'America/Bogota', 'HH24:MI') ||
-    ' (hora Colombia): HTTP ' || coalesce(status_code::text, '?') || ' — ' ||
-    coalesce(left(content::text, 150), coalesce(error_msg, 'sin detalle')))
+    'La función «' || coalesce(cc.fn, 'desconocida') || '» falló a las ' ||
+    to_char(h.created at time zone 'America/Bogota', 'HH24:MI') ||
+    ' (hora Colombia): HTTP ' || coalesce(h.status_code::text, '?') || ' — ' ||
+    coalesce(left(h.content::text, 150), coalesce(h.error_msg, 'sin detalle')))
   into fallas
-  from net._http_response
-  where created > now() - interval '35 minutes'
-    and (status_code is distinct from 200 or error_msg is not null or content::text like '%"ok":false%');
+  from net._http_response h
+  left join public.cron_calls cc on cc.req_id = h.id
+  where h.created > now() - interval '35 minutes'
+    and (h.status_code is distinct from 200
+         or h.error_msg is not null
+         or h.content::text like '%"ok":false%');
   if fallas is not null then problemas := problemas || fallas; end if;
   return problemas;
 end $fn$;

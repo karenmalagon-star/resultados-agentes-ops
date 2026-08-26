@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 const SURL=Deno.env.get("SUPABASE_URL")!;const SR=Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;const DBH={apikey:SR,Authorization:`Bearer ${SR}`,"Content-Type":"application/json"} as Record<string,string>;const json=(o:unknown,s=200)=>new Response(JSON.stringify(o),{status:s,headers:{"content-type":"application/json"}});
-async function cfg(k:string){const r=await fetch(`${SURL}/rest/v1/app_config?key=eq.${encodeURIComponent(k)}&select=value`,{headers:DBH});const j=await r.json();return (j&&j[0]&&j[0].value)||"";}
-Deno.serve(async(req)=>{const wk=req.headers.get("x-write-key")||"";if(wk!==(await cfg("write_key")))return json({error:"unauthorized"},401);try{
+async function cfg(k:string){for(let i=0;i<3;i++){try{const r=await fetch(`${SURL}/rest/v1/app_config?key=eq.${encodeURIComponent(k)}&select=value`,{headers:DBH});const j=await r.json();if(Array.isArray(j))return (j[0]&&j[0].value)||"";}catch(_){/* reintenta */}await new Promise((res)=>setTimeout(res,500));}return "";}
+Deno.serve(async(req)=>{const wk=req.headers.get("x-write-key")||"";const stored=await cfg("write_key");if(!stored)return json({error:"config no disponible (transitorio)"},503);if(wk!==stored)return json({error:"unauthorized"},401);try{
  const sr=await fetch(`${SURL}/rest/v1/snapshot?select=data&order=created_at.desc&limit=1`,{headers:DBH});const sj:any=await sr.json();const snap:any=(sj&&sj[0]&&sj[0].data)||{};
  const rows:any[]=[];let off=0;for(let i=0;i<80;i++){const r=await fetch(`${SURL}/rest/v1/events_history?select=order_id,type,agent,store,country,ev_date,halfhour,reason&order=ev_date.asc&limit=1000&offset=${off}`,{headers:DBH});const j:any=await r.json();if(!Array.isArray(j)||j.length===0)break;for(const x of j)rows.push(x);if(j.length<1000)break;off+=1000;}
  const agents:string[]=[],ai:any={},dates:string[]=[],di:any={},countries:string[]=[],ci:any={},stores:string[]=[],si:any={},reasons:string[]=[],ri:any={};

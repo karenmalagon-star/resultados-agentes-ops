@@ -90,7 +90,7 @@ Deno.serve(async (req: Request) => {
           (test ? "🧪 PRUEBA — " : "⚠️ ") + `Dashboard Ops: ${problemas.length} problema${problemas.length > 1 ? "s" : ""} detectado${problemas.length > 1 ? "s" : ""}`,
           `<p>El monitor del tablero <b>Resultados Agentes Ops</b> detectó (revisión de las ${horaCol}, hora Colombia):</p>` +
           `<ul>${lista}</ul>` +
-          `<p><b>Qué hacer:</b> abrir el tablero y verificar la hora de \"Última actualización\". Si el problema persiste, revisar los Logs de las Edge Functions en Supabase (proyecto sbiyedqpqtiqvlgentci) o avisar a Daniel.</p>` +
+          `<p><b>Qué hacer:</b> abrir el tablero y verificar la hora de \"Última actualización\". Si el problema persiste, revisar los Logs de las Edge Functions en Supabase (proyecto \"Resultados Agentes Ops\") o avisar a Daniel.</p>` +
           `<p style=\"color:#888;font-size:12px\">Este aviso se repite máximo cada 4 horas mientras el problema siga. Cuando se normalice, llegará un correo de confirmación.</p>`
         );
         if (enviado && !test) await setCfg("monitor_state", hash + "@@" + new Date().toISOString());
