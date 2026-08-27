@@ -48,11 +48,33 @@ Deno.serve(async (req: Request) => {
       cohort = cd || {};
     } catch (_) { cohort = {}; }
     try { const cp = await getOne("panel_data?key=eq.capacity&select=data"); cap = (cp && cp[0] && cp[0].data) || {}; } catch (_) { cap = {}; }
-    let html = template.replace("__DATA__", () => inject(data));
-    html = html.replace("__LEADERDATA__", () => inject(leader));
-    html = html.replace("__COHORTDATA__", () => inject(cohort));
-    html = html.replace("__CAPDATA__", () => inject(cap));
-    html = html.replace("__AB64__", () => JSON.stringify(auth.slice(6)));
+    // Configuracion de reglas para el cliente (jornada, festivos, meta de Gest/hora).
+    // Editable en app_config sin redesplegar (decisiones C5/D1/D4/D5 del cuestionario).
+    const JORNADA_DEF: Record<string, number> = { "0": 0, "1": 7.5, "2": 7.5, "3": 7.5, "4": 7.5, "5": 6.5, "6": 5.5, "festivo": 5.5 };
+    const rcfg: any = { jornada: { ...JORNADA_DEF }, festivos: [], meta: 38 };
+    try {
+      const rows = await getOne("app_config?select=key,value&key=in.(jornada,festivos_co,gest_hora_meta)");
+      if (Array.isArray(rows)) for (const row of rows) {
+        if (row.key === "jornada") {
+          // Merge con defaults (permite override parcial) y solo valores numericos validos.
+          try { const pj = JSON.parse(row.value); if (pj && typeof pj === "object") { for (const k of Object.keys(pj)) { const v = parseFloat(pj[k]); if (Number.isFinite(v) && v >= 0) rcfg.jornada[k] = v; } } } catch (_) { /* opcional */ }
+        }
+        if (row.key === "festivos_co") { try { const pf = JSON.parse(row.value); if (Array.isArray(pf)) rcfg.festivos = pf.filter((x: unknown) => typeof x === "string"); } catch (_) { /* opcional */ } }
+        if (row.key === "gest_hora_meta") { const n = parseFloat(row.value); if (Number.isFinite(n) && n > 0) rcfg.meta = n; }
+      }
+    } catch (_) { /* config opcional: el cliente tiene defaults */ }
+    // Reemplazo en UNA sola pasada: el contenido ya inyectado nunca se re-escanea,
+    // asi un dato de Dropi que contenga un token literal no puede secuestrar otro token
+    // (leccion del incidente __AUTHB64__).
+    const TOKENS: Record<string, string> = {
+      "__DATA__": inject(data),
+      "__LEADERDATA__": inject(leader),
+      "__COHORTDATA__": inject(cohort),
+      "__CAPDATA__": inject(cap),
+      "__RULESCFG__": inject(rcfg),
+      "__AB64__": JSON.stringify(auth.slice(6)),
+    };
+    const html = template.replace(/__(?:DATA|LEADERDATA|COHORTDATA|CAPDATA|RULESCFG|AB64)__/g, (t: string) => TOKENS[t] ?? t);
     return new Response(html, { status: 200, headers: { ...CORS, "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
   } catch (e) {
     return new Response("Error: " + String(e), { status: 500, headers: CORS });

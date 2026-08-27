@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { norm, isExcludedAgent } from "./rules.ts";
 
 const SURL = Deno.env.get("SUPABASE_URL")!;
 const SR = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -19,7 +20,6 @@ async function cfg(key: string): Promise<string> {
 }
 const DAY = 86400000;
 function gapNoSun(a: number, b: number): number { let n = 0; for (let d = a + 1; d <= b; d++) { if (new Date(d * DAY).getUTCDay() !== 0) n++; } return n; }
-const norm = (s: string) => (s || "").trim().replace(/\s+/g, " ").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 Deno.serve(async (req: Request) => {
   const wk = req.headers.get("x-write-key") || "";
@@ -78,9 +78,11 @@ Deno.serve(async (req: Request) => {
     const amRows = Object.entries(amRun).map(([id, name]) => ({ id, name }));
     if (amRows.length) await fetch(`${SURL}/rest/v1/agent_map`, { method: "POST", headers: { ...DBH, Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(amRows) });
 
-    const EXAG = new Set(["postfecha fenix", "reprogramadas operacion", "sin gestion", "seguimiento historico"]);
-    const isEx = (n: string) => { const x = norm(n); return EXAG.has(x) || x.indexOf("postfecha") >= 0 || x.indexOf("sin gestion") >= 0; };
-    const isPC = (o: any) => norm(o.ds) === "pendiente confirmacion";
+    const isEx = (n: string) => isExcludedAgent(n);
+    // 'Pendiente' EXPLICITO (decision B8): estado Dropi pendiente Y estado Refresh pendiente,
+    // sin confiar en que el pull solo trajo pendientes.
+    const PENDRS = new Set(["ASSIGNED", "REPROGRAMMED", "UNASSIGNED"]);
+    const isPC = (o: any) => norm(o.ds) === "pendiente confirmacion" && PENDRS.has(o.rs);
     const real = (o: any) => o.an && o.an !== "(sin agente)" && !isEx(o.an);
 
     const OF = O.filter((o) => isPC(o) && !isEx(o.an));

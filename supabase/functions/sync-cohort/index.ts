@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { norm, isExcludedAgent, isPostfecha } from "./rules.ts";
 
 const SURL = Deno.env.get("SUPABASE_URL")!;
 const SR = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -18,7 +19,6 @@ async function cfg(key: string): Promise<string> {
   return "";
 }
 const DAY = 86400000;
-const norm = (s: string) => (s || "").trim().replace(/\s+/g, " ").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 Deno.serve(async (req: Request) => {
   const wk = req.headers.get("x-write-key") || "";
@@ -50,7 +50,6 @@ Deno.serve(async (req: Request) => {
     const CANC = new Set(["CANCELLED", "CANCELLED_OUTSIDE_OF_APP", "CANCELLED_AND_DELETED_IN_DROPI"]);
     const OUT = new Set(["CONFIRMED_OUTSIDE_OF_APP", "CANCELLED_OUTSIDE_OF_APP", "CANCELLED_AND_DELETED_IN_DROPI"]);
     const PENDRS = new Set(["ASSIGNED", "REPROGRAMMED", "UNASSIGNED"]);
-    const EXHARD = new Set(["reprogramadas operacion", "sin gestion", "seguimiento historico"]);
     const MAXOFF = 7;
     const LIM = 1000;
 
@@ -73,8 +72,10 @@ Deno.serve(async (req: Request) => {
         const active = o.dropiStore ? (o.dropiStore.isActive === true) : false;
         if (!active) continue;
         const an = o.agent ? norm((o.agent.name || "") + " " + (o.agent.surname || "")) : "";
-        if (an && EXHARD.has(an)) continue;
-        const pf = an.indexOf("postfecha") >= 0;
+        // REGLA_POSTFECHA: postfecha NO se excluye del todo, se cuenta APARTE (v4).
+        // Los demas pseudo-agentes se excluyen por substring (reglas compartidas, B1).
+        if (an && isExcludedAgent(an) && !isPostfecha(an)) continue;
+        const pf = isPostfecha(an);
         O.push({ dc: dcd, pf, rs: o.refreshOrderStatus, ds: norm(o.dropiOrderStatus || ""), cf: o.confirmedAt, cx: o.cancelledAt, calls: (o.callHistory || []).length, st: o.dropiStore ? o.dropiStore.name : "(sin tienda)" });
       }
       of += rows.length;

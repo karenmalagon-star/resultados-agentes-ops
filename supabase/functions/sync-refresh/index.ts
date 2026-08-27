@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { isExcludedAgent } from "./rules.ts";
 
 const SURL = Deno.env.get("SUPABASE_URL")!;
 const SR = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -117,9 +118,8 @@ Deno.serve(async (req: Request) => {
     // como CONFIRMADA efectiva del agente que la trabajo (sube efectividad; no cuenta como cancelacion).
     // 'Pedido de prueba' sigue excluido por completo.
     const EXCL = new Set(["Nueva orden", "Pedido de prueba"]);
-    const norm = (s: string) => (s || "").trim().replace(/\s+/g, " ").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
-    const EXAG = new Set(["postfecha fenix", "reprogramadas operacion", "sin gestion", "seguimiento historico"]);
-    const isEx = (n: string) => EXAG.has(norm(n));
+    // Exclusion de pseudo-agentes por SUBSTRING via reglas compartidas (decision B1).
+    const isEx = (n: string) => isExcludedAgent(n);
     const Sm = +new Date(S), Em = +new Date(E);
     const win = (t: any) => { const x = t ? +new Date(t) : NaN; return x >= Sm && x < Em; };
     const dstr = (t: any) => new Date(t).toISOString().slice(0, 10);

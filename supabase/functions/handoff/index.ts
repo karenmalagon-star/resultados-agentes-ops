@@ -14,8 +14,6 @@ async function pg(path: string, init?: RequestInit) {
   return await fetch(`${SURL}/rest/v1/${path}`, { ...(init || {}), headers: { ...DBH, ...(init && (init as any).headers ? (init as any).headers : {}) } });
 }
 
-const AREAS = new Set(["Tecnico", "Técnico", "Tienda", "Auditoria", "Auditoría", "SAC", "Dropi"]);
-
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   const unauth = () => new Response(JSON.stringify({ error: "no autorizado" }), { status: 401, headers: { ...CORS, "content-type": "application/json", "WWW-Authenticate": 'Basic realm="Handoff"' } });
@@ -75,7 +73,22 @@ Deno.serve(async (req: Request) => {
       }
       if (action === "reopen") {
         if (!id) return json({ error: "id invalido" }, 400);
-        await pg(`handoff?id=eq.${id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ estado: "abierto", resuelto_nota: null, resuelto_por: null, resuelto_at: null, updated_at: nowISO }) });
+        // "Nada se borra" (decision C6): antes de reabrir, la resolucion previa
+        // se conserva como un avance en el historial de seguimiento.
+        // Si la lectura falla NO se escribe nada: escribir con seg0 vacio borraria el historial.
+        const r0 = await pg(`handoff?id=eq.${id}&select=seguimiento,resuelto_por,resuelto_nota,resuelto_at`);
+        if (!r0.ok) return json({ error: "no pude leer la tarjeta, reintenta" }, 503);
+        const rows0 = await r0.json();
+        if (!Array.isArray(rows0)) return json({ error: "no pude leer la tarjeta, reintenta" }, 503);
+        if (rows0.length === 0) return json({ error: "la tarjeta no existe" }, 404);
+        const prev = rows0[0];
+        const seg0 = Array.isArray(prev.seguimiento) ? prev.seguimiento : [];
+        if (prev.resuelto_por || prev.resuelto_nota) {
+          let fecha = "";
+          try { if (prev.resuelto_at) { const dcol = new Date(new Date(prev.resuelto_at).getTime() - 5 * 3600000); fecha = " (" + dcol.toISOString().slice(0, 16).replace("T", " ") + " hora Colombia)"; } } catch (_) { fecha = ""; }
+          seg0.push({ at: nowISO, autor: prev.resuelto_por || "(sin nombre)", nota: "[REAPERTURA] Resolución previa" + fecha + ": " + (prev.resuelto_nota || "") });
+        }
+        await pg(`handoff?id=eq.${id}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ estado: "abierto", resuelto_nota: null, resuelto_por: null, resuelto_at: null, seguimiento: seg0, updated_at: nowISO }) });
         return json({ ok: true });
       }
       if (action === "escalate") {

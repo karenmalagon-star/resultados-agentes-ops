@@ -751,3 +751,67 @@ SESION 2026-08-26 (c) - Fix 401 enganoso + alertas con nombre de funcion
     se pone a Karen como destinataria.
   - Mejora: el webhook ahora responde DESPUES de enviar (responseMode
     lastNode): si Gmail falla, el monitor lo detecta y reintenta.
+
+========================================================================
+SESION 2026-08-27 - Decisiones del cuestionario de Karen IMPLEMENTADAS
+========================================================================
+  Con las respuestas de Karen al cuestionario de validacion se implemento el
+  paquete completo. Todo revisado por un panel adversarial ANTES de desplegar
+  (6 revisores; 6 hallazgos criticos corregidos antes de tocar produccion).
+
+  MODULO COMPARTIDO DE REGLAS (supabase/functions/_shared/rules.ts):
+  - norm(), isExcludedAgent() (deteccion por SUBSTRING, decision B1),
+    isPostfecha(), constantes de zona horaria. Fuente unica; sync-rules.sh
+    copia el archivo junto a cada funcion; cada deploy lleva index.ts + rules.ts.
+  - sync-refresh v8, sync-panels v14, sync-cohort v9 lo importan. La regla
+    postfecha del Cierre (contar APARTE) se preserva exacta (B4).
+  - IMPORTANTE deploy: cada funcion sync-* se despliega con DOS archivos.
+
+  GEST/HORA OPCION C (decision D4/C7):
+  - Nueva formula en la plantilla: gestiones / jornada programada de los dias
+    con actividad (Lun-Jue 7.5, Vie 6.5, Sab y FESTIVOS 5.5, Dom 0). El KPI
+    sigue siendo promedio de tasas por agente. Meta 38/h visible en el subtitulo.
+  - Todo configurable en app_config: 'jornada' (JSON, admite override parcial),
+    'festivos_co' (array YYYY-MM-DD, cargado 2026-2027), 'gest_hora_meta'.
+  - Detalles de la revision: dia OFF (Dom) gana sobre festivo; eventos de dias
+    con jornada 0 no entran al numerador; si hay FILTRO DE HORAS activo se usa
+    el denominador anterior (bloques de 30 min con actividad) porque la jornada
+    completa no aplica a una franja.
+  - dashboard v14 inyecta la config con el token __RULESCFG__ (plantilla
+    blindada con try/catch + re-render inicial). Reemplazo de tokens en UNA
+    pasada (regex) para que datos inyectados no puedan pisar otros tokens.
+  - ORDEN DE DESPLIEGUE OBLIGATORIO: funcion dashboard PRIMERO, plantilla despues.
+
+  OTRAS CORRECCIONES DEL CUESTIONARIO:
+  - B2/B5: Handoff fijado a hora Colombia: hoDays cuenta dias CALENDARIO
+    Bogota (antes bloques de 24h) y hoFecha formatea con timeZone America/Bogota
+    (antes reloj del navegador).
+  - B8: 'pendiente' explicito en sync-panels (Dropi PC + refreshStatus pendiente).
+  - C4: Set AREAS sin uso eliminado del handoff (el area es texto libre a proposito).
+  - C6: reopen conserva la resolucion previa como avance [REAPERTURA] en el
+    seguimiento; valida la lectura antes de escribir (si falla, NO pisa nada);
+    404 si la tarjeta no existe.
+  - B9: build-history con techo 150k eventos y campo 'truncado' (ok:false si
+    trunca de verdad -> alerta); flag sin falso positivo en el borde.
+  - B10 DESCARTADO: era un falso hallazgo del cuestionario. delayAll es
+    [promedio, n, b0..b5] = 8 elementos; el default de 8 ceros es correcto.
+  - sync-capacity v6: jornada y festivos desde app_config; festivo = 5.5h
+    (como sabado); el dia OFF gana sobre el festivo; guardas anti-NaN.
+
+  VALIDACION SEMANAL (decision D7/F):
+  - Nueva funcion verify-refresh + cron 'verify-refresh-weekly' (viernes 17:00
+    Colombia): compara conf/canc de los ultimos 4 dias completos de
+    events_history contra el reporte interno de Refresh. Tolerancia 0.5%
+    (verify_tolerancia) + piso de 15 ordenes (verify_min_ordenes) para que las
+    canceladas de bajo volumen no hagan ruido. CUALQUIER fallo (login, reporte,
+    parser) escribe last_verify y avisa por correo ("no pudo correr").
+    Parser por claves exactas; ?debug=1 muestra la forma cruda del reporte.
+  - Foto de referencia congelada para la migracion: tablas fixture_20260827_events
+    y fixture_20260827_cohort. OJO: las exclusiones por substring (B1) pueden
+    mover levemente el nivel de las series desde hoy; si se nota un escalon,
+    re-congelar la foto la semana del 1-sep.
+
+  DOCS: HANDOFF_TECNICO corregido (C3 delay Resultados vs alarma Lider, C5
+  jornada configurable, C9 matiz __AB64__, Gest/hora Opcion C). DECISIONES.md
+  con D-005..D-009. Pregunta abierta al equipo (D4): ¿el discador registra el
+  tiempo conectado (login/logout) del agente?

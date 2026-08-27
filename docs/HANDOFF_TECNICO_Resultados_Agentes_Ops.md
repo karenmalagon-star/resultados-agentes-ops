@@ -209,9 +209,9 @@ Fuente: `histD` (historia completa) o, si aún no está, el `snapshot`. Se filtr
 
 **KPIs de arriba:** Total Gest, **Gest/hora**, Efectividad, % Cancelación, % Reprogramadas, Confirmadas, Canceladas, Prom. llamada, Delay prom.
 
-- **Gest/hora**: promedio de la tasa por agente. La tasa de un agente = sus gestiones / sus **horas activas**. Horas activas = 0.5 x (número de medias horas distintas —día|mediaHora— en que el agente tuvo actividad, según los eventos del período). *Se calcula desde los eventos reales del mes (no del callCube), para que escale con todo el período.*
+- **Gest/hora** (Opción C, decisión Karen 2026-08-27): promedio de la tasa por agente. La tasa de un agente = sus gestiones ÷ la **jornada programada** de los días en que tuvo actividad (Lun–Jue 7,5 h · Vie 6,5 h · Sáb y festivos 5,5 h · Dom 0 — configurable en `app_config.jornada` y `festivos_co`). El denominador es la jornada completa del día: los descansos no inflan el resultado y quien se ausenta sin gestionar baja su promedio. Benchmark de referencia: **38/h** (`gest_hora_meta`, configurable). Limitación conocida: asume jornada completa (no detecta ausencias de medio día).
 - **Prom. llamada**: duración promedio de llamadas contestadas (del `callCube`).
-- **Delay prom.**: días hábiles (sin domingo) entre el plazo (Fecha Dropi + 1 día) y el primer intento de llamada.
+- **Delay prom.** (Resultados): días **calendario** (con decimales, domingos incluidos) entre la creación de la orden (Fech. Dropi) y la gestión que la **definió** (confirmación o cancelación). ⚠️ No confundir con la **alarma de demora del Líder**, que es otra métrica: días **hábiles** (sin domingo) entre el plazo (Fech. Dropi + 1 día) y el **primer intento** de llamada.
 
 **Tabla "Detalle por agente":** por agente muestra Total Gest, Gest/hora, Conf, Canc, Reprog, Efect, %Canc, %Reprog y Delay. La columna **Delay es ordenable** (clic en el encabezado alterna mayor->menor, menor->mayor, y vuelve al orden por Total Gest). El "ojito" abre el detalle de órdenes del agente.
 
@@ -231,7 +231,7 @@ Fuente: `cohortH` (o `cohort`). Para cada **día de creación** de las órdenes 
 
 ### 7.3 Capacidad operativa
 
-Fuente: `capacity`. Estima los agentes necesarios para hoy: `agentesNecesarios = workloadHumano / capacidadPorAgente`, donde `workloadHumano = (backlog + ingreso esperado) x (1 - ai_share)` y `capacidadPorAgente = calls_per_hour x horas_del_día`. Parámetros ajustables en `app_config`: `calls_per_hour`, `ai_share`, `agentes_actuales`; las horas por día están fijas en el código de `sync-capacity` (Lun-Jue 7.5, Vie 6.5, Sáb 5.5, Dom 0).
+Fuente: `capacity`. Estima los agentes necesarios para hoy: `agentesNecesarios = workloadHumano / capacidadPorAgente`, donde `workloadHumano = (backlog + ingreso esperado) x (1 - ai_share)` y `capacidadPorAgente = calls_per_hour x horas_del_día`. Parámetros ajustables en `app_config`: `calls_per_hour`, `ai_share`, `agentes_actuales`; la jornada por día es **configurable** en `app_config` (clave `jornada`: Lun–Jue 7.5, Vie 6.5, Sáb 5.5, Dom 0, festivo 5.5) junto con el calendario `festivos_co` (festivos colombianos = jornada de sábado, decisión D5 2026-08-27).
 
 ### 7.4 Líder
 
@@ -244,7 +244,7 @@ Fuente: `panel_data.leader` (lo arma `sync-panels`, ventana de 5 días salvo el 
 
 ### 7.5 Handoff (entrega de turno) — dentro de Líder
 
-Módulo de **escritura** (los líderes ingresan datos). Cada pendiente: autor, fecha, texto, categoría, tienda (desplegable), # orden, prioridad, estado (abierto/resuelto), marcas Informativa/Radar, escalado (Técnico/Tienda/Auditoría/SAC/Dropi/Otra), avances diarios y resolución (quién y en qué finalizó). Tiene: acuse "Recibido por", **alarma de 2+ días calendario** sin resolver, sección **Radar permanente** (no se cierra), **historial de resueltos** y **búsqueda por tienda**. Todo escribe vía la función `handoff` (autenticada) con service role; el navegador nunca ve llaves.
+Módulo de **escritura** (los líderes ingresan datos). Cada pendiente: autor, fecha, texto, categoría, tienda (desplegable), # orden, prioridad, estado (abierto/resuelto), marcas Informativa/Radar, escalado (Técnico/Tienda/Auditoría/SAC/Dropi/Otra), avances diarios y resolución (quién y en qué finalizó). Tiene: acuse "Recibido por", **alarma de 2+ días calendario** sin resolver, sección **Radar permanente** (no se cierra), **historial de resueltos** y **búsqueda por tienda**. Todo escribe vía la función `handoff` (autenticada) con service role; la **service role nunca** llega al navegador. ⚠️ Matiz de seguridad: la credencial **Basic del login** (usuario:contraseña en base64) sí se inyecta en el HTML servido (`__AB64__`) para que el Handoff pueda escribir — quien inspeccione la página estando logueado puede leerla. Como la contraseña es compartida, tratar el HTML como sensible. Mejora futura: autenticación por usuario/token.
 
 ---
 
