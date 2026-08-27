@@ -80,12 +80,15 @@ Deno.serve(async (req: Request) => {
     if (!token) return await fallo("Refresh no devolvió token de sesión", Object.keys(lj || {}), 502);
     const H = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
 
-    // Ventana: los 4 dias completos anteriores a hoy (hora Colombia).
+    // Ventana: los 2 dias COMPLETOS anteriores a hoy (hora Colombia), porque el reporte
+    // de Refresh devuelve buckets fijos (Hoy parcial, Ayer, Anteayer, "Ultimos 4 dias"
+    // acumulado — verificado con ?debug=1 el 2026-08-27). Se comparan Ayer + Anteayer:
+    // dias cerrados en ambos lados, sin dia parcial ni acumulados que dupliquen.
     const col = new Date(Date.now() - 5 * 3600000);
     const p = (x: number) => String(x).padStart(2, "0");
     const ymd = (d: Date) => d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1) + "-" + p(d.getUTCDate());
     const ayer = new Date(Date.UTC(col.getUTCFullYear(), col.getUTCMonth(), col.getUTCDate() - 1));
-    const inicio = new Date(Date.UTC(col.getUTCFullYear(), col.getUTCMonth(), col.getUTCDate() - 4));
+    const inicio = new Date(Date.UTC(col.getUTCFullYear(), col.getUTCMonth(), col.getUTCDate() - 2));
     const desde = ymd(inicio), hasta = ymd(ayer);
 
     // Reporte interno de Refresh (misma convencion de fechas que /orders/: hora Colombia etiquetada Z).
@@ -97,49 +100,56 @@ Deno.serve(async (req: Request) => {
     try { rep = JSON.parse(rtxt); } catch (_) { rep = null; }
     if (rr.status !== 200 || rep == null) return await fallo("el reporte de Refresh no respondió (HTTP " + rr.status + ")", rtxt.slice(0, 200), 502);
 
-    // Parser: SOLO claves exactas conocidas (falla ruidoso si el reporte trae otras;
-    // en ese caso correr ?debug=1, ver la forma real y ampliar las listas de claves).
-    const CONF_KEYS = new Set(["confirmed", "confirmadas", "totalconfirmed", "confirmedorders"]);
-    const CANC_KEYS = new Set(["cancelled", "canceled", "canceladas", "totalcancelled", "cancelledorders"]);
-    const BAD = /rate|percent|pct|porcent|promedio|avg/;
-    const NEG = /^(un|not|no|sin)/;
-    let repConf = 0, repCanc = 0, gotConf = false, gotCanc = false;
-    const acc = (o: any) => {
-      if (!o || typeof o !== "object") return;
-      for (const k of Object.keys(o)) {
-        const v = o[k];
-        if (v && typeof v === "object") { acc(v); continue; }
-        if (typeof v !== "number") continue;
-        const kl = k.toLowerCase();
-        if (BAD.test(kl) || NEG.test(kl)) continue;
-        if (CONF_KEYS.has(kl)) { repConf += v; gotConf = true; }
-        else if (CANC_KEYS.has(kl)) { repCanc += v; gotCanc = true; }
-      }
-    };
-    if (Array.isArray(rep)) rep.forEach(acc); else acc(rep);
-    if (!gotConf || !gotCanc) {
-      return await fallo("no pude extraer los totales del reporte de Refresh; correr con ?debug=1 y ajustar el parser a la forma real", { claves: Object.keys(Array.isArray(rep) ? (rep[0] || {}) : rep) }, 500);
+    // Parser: buckets por nombre. El reporte (verificado 2026-08-27) es un array de
+    // { period: "Hoy"|"Ayer"|"Anteayer"|"Últimos 4 días", totalConfirmed, totalCancelled, ... }.
+    // Se usan SOLO "Ayer" y "Anteayer": "Hoy" va parcial y "Últimos 4 días" es acumulado.
+    const items: any[] = Array.isArray(rep) ? rep : (Array.isArray(rep.data) ? rep.data : []);
+    const normP = (x: string) => (x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const bAyer = items.find((x: any) => normP(x.period) === "ayer");
+    const bAnte = items.find((x: any) => normP(x.period) === "anteayer");
+    if (!bAyer || !bAnte || typeof bAyer.totalConfirmed !== "number" || typeof bAnte.totalConfirmed !== "number") {
+      return await fallo("el reporte de Refresh cambio de forma (no encuentro los buckets Ayer/Anteayer); correr con ?debug=1 y ajustar el parser", { periodos: items.map((x: any) => x && x.period) }, 500);
     }
+    const repConf = (+bAyer.totalConfirmed || 0) + (+bAnte.totalConfirmed || 0);
+    const repCanc = (+bAyer.totalCancelled || 0) + (+bAnte.totalCancelled || 0);
 
     // Nuestros totales (historia permanente)
     const nosConf = await countEvents(desde, hasta, 0);
     const nosCanc = await countEvents(desde, hasta, 1);
 
-    const pct = (a: number, b: number) => b > 0 ? +(Math.abs(a - b) / b * 100).toFixed(2) : (a > 0 ? 100 : 0);
-    const dConf = pct(nosConf, repConf), dCanc = pct(nosCanc, repCanc);
-    const tRaw = parseFloat(await cfg("verify_tolerancia"));
-    const TOL = Number.isFinite(tRaw) && tRaw >= 0 ? tRaw : 0.5;
-    const mRaw = parseInt(await cfg("verify_min_ordenes"));
-    const MIN = Number.isFinite(mRaw) && mRaw >= 0 ? mRaw : 15;
-    const mal = (dPct: number, a: number, b: number) => dPct > TOL && Math.abs(a - b) > MIN;
-    const ok = !mal(dConf, nosConf, repConf) && !mal(dCanc, nosCanc, repCanc);
+    // COMPARACION POR LINEA BASE (calibrado 2026-08-27): las dos fuentes cuentan
+    // DISTINTO por diseño (el dashboard excluye buzones, reclasifica "Nueva orden" y
+    // no ve las cancelaciones fuera de la app), asi que una tolerancia absoluta es
+    // inaplicable (medido: conf +5.4%, canc -45%). Lo que SI detecta perdida de datos
+    // es la DESVIACION de esa relacion: si la razon dashboard/Refresh cambia mas de
+    // verify_desviacion % (default 10) frente a la linea base, algo se rompio.
+    // Re-calibrar: delete from app_config where key='verify_baseline';
+    const rConf = repConf > 0 ? nosConf / repConf : 0;
+    const rCanc = repCanc > 0 ? nosCanc / repCanc : 0;
+    const dRaw = parseFloat(await cfg("verify_desviacion"));
+    const DEV = Number.isFinite(dRaw) && dRaw > 0 ? dRaw : 10;
+    let base: any = null;
+    try { base = JSON.parse(await cfg("verify_baseline")); } catch (_) { base = null; }
 
-    const resumen = { ok, desde, hasta, tolerancia_pct: TOL, piso_ordenes: MIN, confirmadas: { dashboard: nosConf, refresh: repConf, diff_pct: dConf }, canceladas: { dashboard: nosCanc, refresh: repCanc, diff_pct: dCanc } };
+    let ok = true, modo = "";
+    let devConf = 0, devCanc = 0;
+    if (!base || !Number.isFinite(+base.rConf) || !Number.isFinite(+base.rCanc)) {
+      // Primera corrida (o re-calibracion): se fija la linea base, sin alerta.
+      await setCfg("verify_baseline", JSON.stringify({ rConf: +rConf.toFixed(4), rCanc: +rCanc.toFixed(4), at: new Date().toISOString(), ventana: desde + ".." + hasta }));
+      modo = "linea base establecida";
+    } else {
+      devConf = base.rConf > 0 ? +(Math.abs(rConf - base.rConf) / base.rConf * 100).toFixed(1) : 0;
+      devCanc = base.rCanc > 0 ? +(Math.abs(rCanc - base.rCanc) / base.rCanc * 100).toFixed(1) : 0;
+      ok = devConf <= DEV && devCanc <= DEV;
+      modo = "comparado contra linea base";
+    }
+
+    const resumen = { ok, modo, desde, hasta, desviacion_max_pct: DEV, confirmadas: { dashboard: nosConf, refresh: repConf, razon: +rConf.toFixed(4), desviacion_pct: devConf }, canceladas: { dashboard: nosCanc, refresh: repCanc, razon: +rCanc.toFixed(4), desviacion_pct: devCanc }, linea_base: base };
     await setCfg("last_verify", JSON.stringify({ ...resumen, at: new Date().toISOString() }));
 
     if (!ok) {
-      await avisar("⚠️ Dashboard Ops: la validación semanal contra Refresh no cuadra",
-        `<p>Comparación del período <b>${desde} a ${hasta}</b> (tolerancia ${TOL}%, piso ${MIN} órdenes):</p><ul><li>Confirmadas: dashboard ${nosConf} vs Refresh ${repConf} (diferencia ${dConf}%)</li><li>Canceladas: dashboard ${nosCanc} vs Refresh ${repCanc} (diferencia ${dCanc}%)</li></ul><p><b>Qué hacer:</b> una diferencia grande suele significar que alguna corrida perdió datos. Revisar los Logs de las Edge Functions en Supabase (proyecto "Resultados Agentes Ops") o avisar a Daniel.</p><p style="color:#888;font-size:12px">Nota: el dashboard excluye buzones internos y reclasifica "Nueva orden", así que una diferencia pequeña y estable es normal.</p>`);
+      await avisar("⚠️ Dashboard Ops: la validación semanal contra Refresh se desvió",
+        `<p>La relación entre los números del dashboard y el reporte de Refresh cambió más de ${DEV}% frente a su línea base (período <b>${desde} a ${hasta}</b>):</p><ul><li>Confirmadas: dashboard ${nosConf} vs Refresh ${repConf} — desviación ${devConf}%</li><li>Canceladas: dashboard ${nosCanc} vs Refresh ${repCanc} — desviación ${devCanc}%</li></ul><p><b>Qué significa:</b> las dos fuentes siempre difieren un poco (cuentan distinto a propósito), pero esa diferencia es estable. Que se haya movido tanto suele indicar que alguna corrida perdió datos o que Refresh cambió algo.</p><p><b>Qué hacer:</b> revisar los Logs de las Edge Functions en Supabase (proyecto "Resultados Agentes Ops") o avisar a Daniel.</p>`);
     }
     return json(resumen);
   } catch (e) { return await fallo("excepción: " + String(e)); }

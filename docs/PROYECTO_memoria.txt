@@ -815,3 +815,20 @@ SESION 2026-08-27 - Decisiones del cuestionario de Karen IMPLEMENTADAS
   jornada configurable, C9 matiz __AB64__, Gest/hora Opcion C). DECISIONES.md
   con D-005..D-009. Pregunta abierta al equipo (D4): ¿el discador registra el
   tiempo conectado (login/logout) del agente?
+
+  CALIBRACION DE verify-refresh (mismo dia, 2026-08-27):
+  - El reporte de Refresh devuelve buckets FIJOS: Hoy (parcial), Ayer, Anteayer
+    y "Ultimos 4 dias" (ACUMULADO: sumarlo todo duplica). Ignora el rango pedido.
+  - Medido con datos reales (Ayer+Anteayer): confirmadas dashboard +5.4% vs
+    reporte; canceladas -45%. NO es perdida de datos: las fuentes cuentan
+    distinto A PROPOSITO (el dashboard excluye buzones, reclasifica "Nueva
+    orden" y NO registra cancelaciones fuera de la app, que son muchas).
+  - Consecuencia: la tolerancia ABSOLUTA de 0.5% (decision D7) es inaplicable
+    entre estas dos fuentes. verify-refresh v3 usa LINEA BASE + DESVIACION:
+    guarda la razon dashboard/Refresh (conf 1.0537, canc 0.5472 al calibrar) y
+    alerta si esa razon se desvia mas de verify_desviacion % (default 10) --
+    eso SI detecta perdida de datos. Re-calibrar: borrar app_config
+    'verify_baseline'. Compara solo dias completos (Ayer+Anteayer).
+  - NOTA: la corrida de calibracion del 27-ago disparo UNA alerta por correo a
+    Karen antes del ajuste (la version v2 aun comparaba absoluto). Fue falsa
+    alarma de calibracion, no un incidente.
