@@ -1,17 +1,30 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { norm, isExcludedAgent, isPostfecha } from "./rules.ts";
 
 const SURL = Deno.env.get("SUPABASE_URL")!;
 const SR = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const DBH = { apikey: SR, Authorization: `Bearer ${SR}`, "Content-Type": "application/json" } as Record<string,string>;
 const REFRESH = "https://api-refresh.fenix-ventures.co/bff";
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
-async function cfg(key: string): Promise<string> { const r = await fetch(`${SURL}/rest/v1/app_config?key=eq.${encodeURIComponent(key)}&select=value`, { headers: DBH }); const j = await r.json(); return (j && j[0] && j[0].value) || ""; }
+async function cfg(key: string): Promise<string> {
+  // Con reintento: un fallo transitorio leyendo app_config no debe confundirse con llave invalida.
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetch(`${SURL}/rest/v1/app_config?key=eq.${encodeURIComponent(key)}&select=value`, { headers: DBH });
+      const j = await r.json();
+      if (Array.isArray(j)) return (j[0] && j[0].value) || "";
+    } catch (_) { /* reintenta */ }
+    await new Promise((res) => setTimeout(res, 500));
+  }
+  return "";
+}
 const DAY = 86400000;
-const norm = (s: string) => (s || "").trim().replace(/\s+/g, " ").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 Deno.serve(async (req: Request) => {
   const wk = req.headers.get("x-write-key") || "";
-  if (!wk || wk !== (await cfg("write_key"))) return json({ error: "unauthorized" }, 401);
+  const stored = await cfg("write_key");
+  if (!stored) return json({ error: "config no disponible (transitorio)" }, 503);
+  if (wk !== stored) return json({ error: "unauthorized" }, 401);
   try {
     const email = await cfg("refresh_email"), password = await cfg("refresh_password");
     if (!email || !password) return json({ error: "faltan credenciales" }, 400);
@@ -37,18 +50,21 @@ Deno.serve(async (req: Request) => {
     const CANC = new Set(["CANCELLED", "CANCELLED_OUTSIDE_OF_APP", "CANCELLED_AND_DELETED_IN_DROPI"]);
     const OUT = new Set(["CONFIRMED_OUTSIDE_OF_APP", "CANCELLED_OUTSIDE_OF_APP", "CANCELLED_AND_DELETED_IN_DROPI"]);
     const PENDRS = new Set(["ASSIGNED", "REPROGRAMMED", "UNASSIGNED"]);
-    const EXHARD = new Set(["reprogramadas operacion", "sin gestion", "seguimiento historico"]);
     const MAXOFF = 7;
     const LIM = 1000;
 
     const O: any[] = [];
+    // Errores HTTP de la API: se acumulan y se reportan (antes se tragaban en silencio).
+    const PULL_ERR: string[] = [];
     let of = 0;
+    // Paginacion robusta: recorrer hasta pagina vacia (NO cortar en pagina parcial).
     for (let pg = 0; pg < 40; pg++) {
       const b: any = { dropiStoreIds: [], dropiOrderStatusIds: [], refreshOrderStatusIds: [], agentIds: [], dropiOrderIds: [], limit: LIM, offset: of, startDate: S, endDate: E };
       const r = await fetch(`${REFRESH}/orders/`, { method: "POST", headers: H, body: JSON.stringify(b) });
-      if (r.status !== 200) break;
+      if (r.status !== 200) { PULL_ERR.push("pg" + pg + " http" + r.status); break; }
       const j: any = await r.json();
       const rows = j.orders || [];
+      if (rows.length === 0) break;
       for (const o of rows) {
         if (o.dropiOrderId == null || !o.dropiCreationDate) continue;
         const dcd = dayIdx(o.dropiCreationDate);
@@ -56,12 +72,13 @@ Deno.serve(async (req: Request) => {
         const active = o.dropiStore ? (o.dropiStore.isActive === true) : false;
         if (!active) continue;
         const an = o.agent ? norm((o.agent.name || "") + " " + (o.agent.surname || "")) : "";
-        if (an && EXHARD.has(an)) continue;
-        const pf = an.indexOf("postfecha") >= 0;
+        // REGLA_POSTFECHA: postfecha NO se excluye del todo, se cuenta APARTE (v4).
+        // Los demas pseudo-agentes se excluyen por substring (reglas compartidas, B1).
+        if (an && isExcludedAgent(an) && !isPostfecha(an)) continue;
+        const pf = isPostfecha(an);
         O.push({ dc: dcd, pf, rs: o.refreshOrderStatus, ds: norm(o.dropiOrderStatus || ""), cf: o.confirmedAt, cx: o.cancelledAt, calls: (o.callHistory || []).length, st: o.dropiStore ? o.dropiStore.name : "(sin tienda)" });
       }
-      if (rows.length < LIM) break;
-      of += LIM;
+      of += rows.length;
     }
 
     function mkBucket(dc: number) { return { dc: ymd(dc), dcIdx: dc, entered: 0, postfecha: 0, definidas: 0, definidasFuera: 0, pend: 0, pendLlam: 0, pendSin: 0, cierre: new Array(MAXOFF + 1).fill(0), sumOff: 0, nOff: 0 }; }
@@ -101,6 +118,6 @@ Deno.serve(async (req: Request) => {
 
     const cohort = { gen: nowISO, start: S.slice(0, 10), end: todayStr, maxOff: MAXOFF, general: genArr, byStore: storeArr };
     await fetch(`${SURL}/rest/v1/panel_data`, { method: "POST", headers: { ...DBH, Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ key: "cohort", data: cohort, updated_at: nowISO }) });
-    return json({ ok: true, ordenes: O.length, dias: genArr.map((g: any) => ({ dc: g.dc, entered: g.entered, postfecha: g.postfecha, definidas: g.definidas, pct: g.pct, pend: g.pend, pendSin: g.pendSin, diasProm: g.diasProm })), tiendas: storeArr.length });
+    return json({ ok: PULL_ERR.length === 0, pull_err: PULL_ERR, ordenes: O.length, dias: genArr.map((g: any) => ({ dc: g.dc, entered: g.entered, postfecha: g.postfecha, definidas: g.definidas, pct: g.pct, pend: g.pend, pendSin: g.pendSin, diasProm: g.diasProm })), tiendas: storeArr.length });
   } catch (e) { return json({ error: String(e) }, 500); }
 });

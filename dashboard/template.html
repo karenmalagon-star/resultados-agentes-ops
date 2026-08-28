@@ -96,8 +96,8 @@ function render(){
  document.getElementById('sub').textContent='Ventana '+minD+' a '+maxD+' | '+fmt(D.meta.orders)+' órdenes | Última actualización: '+new Date(D.meta.gen).toLocaleString('es-CO');
  var avg=ca.ans?ca.dur/ca.ans:0;
  var del=D.delayAll;if(f.ag.size){del=[0,0,0,0,0,0,0,0];var sw=0;f.ag.forEach(function(i){var d=D.delayByAgent[i];if(d){for(var k=1;k<8;k++)del[k]+=d[k];sw+=d[0]*d[1];}});del[0]=del[1]?sw/del[1]:0;}
- var slotEv={};evs.forEach(function(e){var k=e[0],sk=e[3]+'|'+e[4];(slotEv[k]=slotEv[k]||{});slotEv[k][sk]=1;});function wHours(a){var m=slotEv[a];if(!m)return 0;var n=0;for(var s in m){n++;}return n*0.5;}var gestByA={};evs.forEach(function(e){gestByA[e[0]]=(gestByA[e[0]]||0)+1;});var _rates=[];Object.keys(gestByA).forEach(function(a){var wh=wHours(+a);if(wh>0)_rates.push(gestByA[a]/wh);});var gPerH=_rates.length?_rates.reduce(function(s,x){return s+x;},0)/_rates.length:0;
- var kp=[['Total Gest',fmt(t.gest),''],['Gest/hora',gPerH.toFixed(1),'prom. por agente'],['Efectividad',t.efec.toFixed(1)+'%','conf+canc'],['% Cancelación',t.cancPct.toFixed(1)+'%','excl. nueva orden/prueba'],['% Reprogramadas',t.reprogPct.toFixed(1)+'%','no contesta'],['Confirmadas',fmt(t.conf),''],['Canceladas',fmt(t.canc),'válidas'],['Prom. llamada',mmss(avg),'contestadas'],['Delay prom.',(+del[0]).toFixed(1)+' d','desde Dropi']];
+ var RCg=window.__RCFG__||{};var JORNg=RCg.jornada||{'0':0,'1':7.5,'2':7.5,'3':7.5,'4':7.5,'5':6.5,'6':5.5,'festivo':5.5};var FESTg=RCg.festivos||[];function jHoras(ds){var wd=new Date(ds+'T00:00:00Z').getUTCDay();var base=+JORNg[String(wd)];if(!isFinite(base))base=0;if(base===0)return 0;if(FESTg.indexOf(ds)>=0){var fh=+JORNg['festivo'];return isFinite(fh)?fh:5.5;}return base;}var _hfF=curFilt();var _hourFilt=(_hfF.h1>6)||(_hfF.h2<22);var agDays={},agSlots={};evs.forEach(function(e){var k=e[0];(agDays[k]=agDays[k]||{})[D.dates[e[3]]]=1;(agSlots[k]=agSlots[k]||{})[e[3]+'|'+e[4]]=1;});function wHours(a){if(_hourFilt){var m2=agSlots[a];if(!m2)return 0;var n=0;for(var s2 in m2){n++;}return n*0.5;}var m=agDays[a];if(!m)return 0;var h=0;for(var ds in m){h+=jHoras(ds);}return h;}var gestByA={};evs.forEach(function(e){if(!_hourFilt&&jHoras(D.dates[e[3]])===0)return;gestByA[e[0]]=(gestByA[e[0]]||0)+1;});var _rates=[];Object.keys(gestByA).forEach(function(a){var wh=wHours(+a);if(wh>0)_rates.push(gestByA[a]/wh);});var gPerH=_rates.length?_rates.reduce(function(s,x){return s+x;},0)/_rates.length:0;
+ var kp=[['Total Gest',fmt(t.gest),''],['Gest/hora',gPerH.toFixed(1),'prom. por agente · meta '+(RCg.meta||38)+'/h'],['Efectividad',t.efec.toFixed(1)+'%','conf+canc'],['% Cancelación',t.cancPct.toFixed(1)+'%','excl. nueva orden/prueba'],['% Reprogramadas',t.reprogPct.toFixed(1)+'%','no contesta'],['Confirmadas',fmt(t.conf),''],['Canceladas',fmt(t.canc),'válidas'],['Prom. llamada',mmss(avg),'contestadas'],['Delay prom.',(+del[0]).toFixed(1)+' d','hasta definir la orden']];
  document.getElementById('kpis').innerHTML=kp.map(function(k){return '<div class="kpi"><div class="v">'+k[1]+'</div><div class="l">'+k[0]+'</div>'+(k[2]?'<small>'+k[2]+'</small>':'')+'</div>';}).join('');
  // per agent
  var byA={};evs.forEach(function(e){var a=e[0];(byA[a]=byA[a]||[]).push(e);});
@@ -227,6 +227,7 @@ html.fxdark .fxsel{background:#0b1120;color:#e6e9f2;border-color:#28324c}
 window.__LEADER__ = __LEADERDATA__;
 window.__COHORT__ = __COHORTDATA__;
 window.__CAP__ = __CAPDATA__;
+try{window.__RCFG__ = __RULESCFG__;}catch(e){window.__RCFG__={};}
 window.__AUTHB64__ = __AB64__;
 window.__HANDOFF_URL__ = "https://sbiyedqpqtiqvlgentci.supabase.co/functions/v1/handoff";
 window.fxCsel = {desde:'',hasta:'',tienda:''};
@@ -262,7 +263,7 @@ function fxLbody(){
  h+='<span class=fxsub style="margin:0">Hasta</span><input type=date class=fxsel id=fxld2 value="'+s.hasta+'" onchange="fxLdate()">';
  h+='<button class="fxtab" style="border:1px solid #d7dce3" onclick="fxLclear()">Limpiar</button>';
  h+='<span class=fxsub style="margin:0">Afecta las tablas de abajo.</span></div>';}
- var tabs=[['carga','Carga por agente y tienda'],['delay','Ordenes con delay'],['sinasig','Ordenes sin asignar'],['reproceso','Ordenes en reproceso'],['handoff','Handoff (entrega de turno)']];
+ var tabs=[['carga','Carga por agente y tienda'],['delay','Días de demora por tienda'],['sinasig','Ordenes sin asignar'],['reproceso','Ordenes en reproceso'],['handoff','Handoff (entrega de turno)']];
  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px;border-bottom:1px solid #e3e6ea;padding-bottom:8px">';
  tabs.forEach(function(t){h+='<button class="fxtab'+(s.tab===t[0]?' fxon':'')+'" onclick="fxLtab(\''+t[0]+'\')">'+t[1]+'</button>';});
  h+='</div>';
@@ -293,7 +294,7 @@ function fxDelay(){
  var d=window.__LEADER__||{};var al=d.alarms||{byStore:[]};
  var arr=(al.byStore||[]).map(function(s){var os=(s.orders||[]).filter(function(o){return fxIn(o.dc);});var dl=0;os.forEach(function(o){if(o.tipo==='delay')dl++;});return{store:s.store,orders:os,delay:dl,total:os.length};}).filter(function(s){return s.total>0;}).sort(function(a,b){return (b.delay-a.delay)||(b.total-a.total);});
  var td=arr.length,od=0;arr.forEach(function(s){od+=s.delay;});
- var h='<div class=fxcard><h3>Ordenes con delay por tienda</h3><p class=fxsub><b>'+td+'</b> tiendas &middot; <b>'+od+'</b> ordenes con delay. Atraso = dias habiles (sin domingo) entre el plazo (Fech.Dropi + 1 dia) y el 1er intento. Clic en el ojo para el detalle.</p><table><thead><tr><th>Tienda</th><th style="text-align:right">Con delay</th><th style="text-align:right">Total alarmas</th><th></th></tr></thead><tbody>';
+ var h='<div class=fxcard><h3>Días de demora por tienda</h3><p class=fxsub><b>'+td+'</b> tiendas &middot; <b>'+od+'</b> ordenes con delay. Atraso = dias habiles (sin domingo) entre el plazo (Fech.Dropi + 1 dia) y el 1er intento. Clic en el ojo para el detalle.</p><table><thead><tr><th>Tienda</th><th style="text-align:right">Con demora</th><th style="text-align:right">Total alarmas</th><th></th></tr></thead><tbody>';
  arr.forEach(function(s,i){
   h+='<tr class=fxexp onclick="fxTog(\'fxs\','+i+')"><td>'+fxEsc(s.store)+'</td><td style="text-align:right"><span class="fxpill fxred">'+s.delay+'</span></td><td style="text-align:right">'+s.total+'</td><td style="text-align:right"><span class=fxeye>&#128065;</span></td></tr>';
   h+='<tr id="fxs'+i+'" style="display:none"><td colspan=4 class=fxdet style="padding:0"><table><thead><tr><th>Orden</th><th>Agente</th><th>Fech. Dropi</th><th>1er intento</th><th>Tipo</th><th style="text-align:right">Dias atraso</th></tr></thead><tbody>';
@@ -339,8 +340,8 @@ function hoLoad(){var s=hoState();s.loading=true;s.error='';fetch(window.__HANDO
 function hoReload(){var s=hoState();fetch(window.__HANDOFF_URL__,{headers:{Authorization:'Basic '+hoAuth()}}).then(function(r){return r.json();}).then(function(j){s.data=j;s.loaded=true;hoRender();}).catch(function(){});}
 function hoPost(payload,cb){fetch(window.__HANDOFF_URL__,{method:'POST',headers:{Authorization:'Basic '+hoAuth(),'Content-Type':'application/json'},body:JSON.stringify(payload)}).then(function(r){return r.json();}).then(function(j){if(j&&j.error){alert('Error: '+j.error);return;}hoReload();if(cb)cb();}).catch(function(){alert('Error de conexion');});}
 function fxHandoff(){var s=hoState();if(!s.loaded&&!s.loading)hoLoad();return fxHandoffBody();}
-function hoDays(iso){if(!iso)return 0;return Math.floor((Date.now()-new Date(iso).getTime())/86400000);}
-function hoFecha(iso){if(!iso)return '';try{return new Date(iso).toLocaleString('es-CO');}catch(e){return String(iso);}}
+function hoDays(iso){if(!iso)return 0;var D8=86400000;function colDia(t){return Math.floor((t-5*3600000)/D8);}return Math.max(0,colDia(Date.now())-colDia(new Date(iso).getTime()));}
+function hoFecha(iso){if(!iso)return '';try{return new Date(iso).toLocaleString('es-CO',{timeZone:'America/Bogota'});}catch(e){try{return new Date(iso).toLocaleString('es-CO');}catch(e2){return String(iso);}}}
 function hoTrunc(s,n){s=String(s||'');return s.length>n?s.slice(0,n)+'…':s;}
 function hoPrio(o){return o.prioridad==='Alta'?0:(o.prioridad==='Baja'?2:1);}
 function hoVal(id){var e=document.getElementById(id);return e?String(e.value).trim():'';}
@@ -491,5 +492,7 @@ function fxCout(){
  function init(){var nav=document.getElementById('fxnav');if(nav&&!document.getElementById('fxcp')){var c=document.createElement('button');c.id='fxcp';c.className='fxtab';c.textContent='Compacto';c.title='Vista compacta sin scroll';c.onclick=function(){setC(!document.body.classList.contains('fxcompact'));};nav.appendChild(c);}if(nav&&!document.getElementById('fxdk')){var b=document.createElement('button');b.id='fxdk';b.className='fxtab';b.title='Modo nocturno';b.style.fontSize='15px';b.onclick=function(){setD(!document.documentElement.classList.contains('fxdark'));};nav.appendChild(b);}var on=false;try{on=localStorage.getItem('fxdark')==='1';}catch(e){}setD(on);var oc=false;try{oc=localStorage.getItem('fxcompact')==='1';}catch(e){}setC(oc);}
  if(document.readyState!=='loading')init();else document.addEventListener('DOMContentLoaded',init);
 })();
+
+try{if(typeof render==='function')render();}catch(e){}
 </script>
 </body></html>

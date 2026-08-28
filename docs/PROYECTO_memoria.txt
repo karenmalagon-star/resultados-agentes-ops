@@ -635,3 +635,200 @@ SESION 2026-08-20 - Correcciones del brief de Daniel Plata (2do colaborador)
 
   PASO 2 - SUBIR EL CODIGO A GITHUB: pendiente (lo hace Karen/Daniel; ver zip entregado).
   Secciones 7 (decision de fondo) y 8 (backlog) del brief: NO ejecutadas (para conversar).
+
+========================================================================
+SESION 2026-08-26 - Robustez de syncs + renombre Delay (Daniel, via PR)
+========================================================================
+  CONTEXTO: Daniel Plata entro como segundo colaborador (acceso a Supabase org
+  Fenix Ventures + collaborator del repo). Desde esta sesion los cambios entran
+  por Pull Request para revision de Karen.
+
+  DESPLEGADO EN PRODUCCION (verificado con corrida real):
+  - sync-refresh v6 y sync-cohort v7: los errores HTTP de la API de Refresh ya
+    NO se tragan en silencio. Se acumulan en PULL_ERR y la respuesta incluye
+    pull_err[] y ok:false si hubo alguno. Antes, una corrida a medias reportaba
+    ok:true con datos incompletos. Verificado: ok:true, pull_err:[], cache 4372.
+  - sync-refresh ademas queda con la paginacion robusta (limit 1000, corta solo
+    en pagina vacia, avanza por rows.length) que Karen ya habia puesto en vivo;
+    este PR sincroniza el repo con ese codigo real.
+  - Plantilla (assets key='template'), renombres pedidos por Daniel P.:
+    pestana/tabla del Lider 'Ordenes con delay' -> 'Dias de demora por tienda',
+    columna 'Con delay' -> 'Con demora'; subtitulo del KPI Delay de Resultados
+    'desde Dropi' -> 'hasta definir la orden'. Motivo: el 'Delay' de Resultados
+    (dias calendario hasta definir la orden, domingos incluidos) y el del Lider
+    (dias habiles sin domingo hasta el 1er intento) son metricas DISTINTAS con
+    el mismo nombre; se renombraron para que no se confundan.
+  - Red de seguridad previa (sesion 20-ago): trigger trg_assets_history guarda
+    copia automatica de la plantilla antes de cada cambio; boton de panico:
+    update assets set content=(select content from assets_history where
+    key='template' order by saved_at desc limit 1) where key='template';
+
+  TRAMPA NUEVA DOCUMENTADA (causa raiz de los 'no permission' de agosto):
+  - Existen DOS organizaciones de Supabase llamadas "Fenix Ventures": la de
+    Karen (rlmuhotpnijfbpshqgrs, donde vive este proyecto) y una personal de
+    Daniel (obxuvsacoexlvvtxghaj). Verificar el conector por NOMBRE de la org
+    no sirve. La verificacion correcta es por proyecto: debe aparecer el ref
+    sbiyedqpqtiqvlgentci en la lista de proyectos del conector.
+
+  ANALISIS DE REGLAS DE NEGOCIO (fuera del repo, en curso):
+  - Se extrajeron 359 reglas de las 10 fuentes del sistema y se detectaron 10
+    reglas transversales con implementaciones DIVERGENTES entre funciones y 9
+    casos donde la documentacion no coincide con el codigo. Pendiente: sesion
+    de validacion con Karen (cuestionario preparado por Daniel).
+  - Decisiones registradas: migracion fuera de Refresh ~45 dias (oct-2026);
+    la plantilla sale de la BD a archivos EN esa migracion; postfecha se
+    documenta como regla de negocio (gestion pactada a futuro, no exclusion
+    arbitraria); validacion de la migracion contra fotos congeladas de
+    events_history (las tiendas que eliminan su integracion desaparecen de
+    Refresh: los datos guardados son la unica copia de su pasado).
+
+========================================================================
+SESION 2026-08-26 (b) - Sistema de ALERTAS POR CORREO (monitor-salud)
+========================================================================
+  QUE ES: si el tablero deja de actualizarse o una corrida falla, le llega un
+  correo a Karen (karen.malagon@fenixventures.co). Antes las fallas eran
+  invisibles: quedaban registradas pero nadie recibia aviso.
+
+  EVIDENCIA DE LA NECESIDAD (mismo dia): el cron de sync-panels fue rechazado
+  con 401 'unauthorized' 4 veces (5:10, 6:10, 7:10 y 10:10 hora Colombia) y el
+  panel Lider quedo congelado por ratos sin que nadie lo notara. Hipotesis de
+  causa: cfg('write_key') devuelve '' ante un fallo transitorio leyendo
+  app_config y la funcion lo confunde con llave invalida (401 enganoso).
+  PENDIENTE: dar reintento a cfg() en todas las funciones (monitor-salud ya lo
+  tiene) y distinguir 'config ilegible' (503) de 'llave mala' (401).
+
+  PIEZAS:
+  - RPC public.monitor_checks() (schema.sql): devuelve lista de problemas.
+    Chequea (1) frescura del snapshot (>75 min), (2) frescura de cada panel
+    (leader>150, histD/cohortH>75, cohort/capacity>26h), (3) corridas de los
+    ultimos 35 min con HTTP != 200, error o '"ok":false'. Solo service_role.
+  - Edge Function monitor-salud: corre por cron '15,45 * * * *'; gate horario
+    7:45-22:00 Colombia; anti-spam (misma alerta max cada 4 h); manda correo
+    de '✅ normalizado' cuando el problema desaparece. ?test=1 = correo de prueba.
+  - Workflow N8N 'Alerta Dashboard Ops -> correo Karen' (instancia
+    danielplatav.app.n8n.cloud, proyecto de equipo): webhook POST
+    /alerta-dashboard-ops -> valida token compartido -> Gmail a Karen.
+    El token vive en app_config (alert_token) y dentro del workflow; NO en el repo.
+  - Config en app_config: alert_webhook_url, alert_token, monitor_state.
+
+  PROBADO END-TO-END: monitor?test=1 -> webhook -> Gmail 'SENT' (ejecucion
+  n8n 19738, success). Karen recibe un correo marcado PRUEBA.
+
+  ADVERTENCIA DE DEPENDENCIA: el envio pasa por el n8n de la cuenta de Daniel
+  (danielplatav.app.n8n.cloud) con la credencial Gmail del proyecto de equipo.
+  Sumar a la conversacion de centralizar cuentas.
+
+========================================================================
+SESION 2026-08-26 (c) - Fix 401 enganoso + alertas con nombre de funcion
+========================================================================
+  FIX '401 ENGANOSO' (todas las funciones de cron, desplegado):
+  - Causa raiz de los rechazos intermitentes del cron (4 veces el 26-ago):
+    cfg('write_key') devolvia '' ante un fallo transitorio leyendo app_config
+    y la funcion lo confundia con llave invalida -> 401 'unauthorized'.
+  - Arreglo: cfg() ahora reintenta 3 veces (con espera de 500 ms) y solo
+    devuelve '' si de verdad no pudo leer; y el chequeo de auth distingue
+    'config no disponible (transitorio)' (503) de 'llave mala' (401).
+  - Desplegado en: sync-refresh v7, sync-panels v13, sync-cohort v8,
+    sync-capacity v5, build-history v4, monitor-salud v2.
+
+  ALERTAS CON NOMBRE DE FUNCION:
+  - Tabla public.cron_calls (req_id, fn, at): cada cron registra que funcion
+    disparo cada llamada (net._http_response no guarda la URL).
+  - Los 6 crons HTTP se recrearon con ese registro y con la write_key leida
+    de app_config EN TIEMPO DE EJECUCION (ya no queda embebida en cron.job).
+  - monitor_checks v2: las alertas dicen la FUNCION que fallo y usan nombres
+    amigables de panel (LIDER, CIERRE, CAPACIDAD...), no las keys internas.
+  - monitor-salud v2: el correo dice 'proyecto "Resultados Agentes Ops"' en
+    vez del codigo del proyecto.
+
+  REMITENTE DE LAS ALERTAS (en curso):
+  - Las credenciales Gmail del proyecto de equipo del n8n resultaron ser el
+    buzon de Lexi (academialexi@gmail.com) -> descartadas por pedido de Daniel.
+  - El workflow se recreo en el proyecto personal de Daniel del n8n con SU
+    credencial Gmail (buzon Fenix), workflow xAi5IiqLqhXh8nLL; la URL del
+    webhook no cambio. PENDIENTE: la credencial 'Gmail account' esta vencida
+    y Daniel debe reconectarla en n8n (OAuth); luego se prueba end-to-end y
+    se pone a Karen como destinataria.
+  - Mejora: el webhook ahora responde DESPUES de enviar (responseMode
+    lastNode): si Gmail falla, el monitor lo detecta y reintenta.
+
+========================================================================
+SESION 2026-08-27 - Decisiones del cuestionario de Karen IMPLEMENTADAS
+========================================================================
+  Con las respuestas de Karen al cuestionario de validacion se implemento el
+  paquete completo. Todo revisado por un panel adversarial ANTES de desplegar
+  (6 revisores; 6 hallazgos criticos corregidos antes de tocar produccion).
+
+  MODULO COMPARTIDO DE REGLAS (supabase/functions/_shared/rules.ts):
+  - norm(), isExcludedAgent() (deteccion por SUBSTRING, decision B1),
+    isPostfecha(), constantes de zona horaria. Fuente unica; sync-rules.sh
+    copia el archivo junto a cada funcion; cada deploy lleva index.ts + rules.ts.
+  - sync-refresh v8, sync-panels v14, sync-cohort v9 lo importan. La regla
+    postfecha del Cierre (contar APARTE) se preserva exacta (B4).
+  - IMPORTANTE deploy: cada funcion sync-* se despliega con DOS archivos.
+
+  GEST/HORA OPCION C (decision D4/C7):
+  - Nueva formula en la plantilla: gestiones / jornada programada de los dias
+    con actividad (Lun-Jue 7.5, Vie 6.5, Sab y FESTIVOS 5.5, Dom 0). El KPI
+    sigue siendo promedio de tasas por agente. Meta 38/h visible en el subtitulo.
+  - Todo configurable en app_config: 'jornada' (JSON, admite override parcial),
+    'festivos_co' (array YYYY-MM-DD, cargado 2026-2027), 'gest_hora_meta'.
+  - Detalles de la revision: dia OFF (Dom) gana sobre festivo; eventos de dias
+    con jornada 0 no entran al numerador; si hay FILTRO DE HORAS activo se usa
+    el denominador anterior (bloques de 30 min con actividad) porque la jornada
+    completa no aplica a una franja.
+  - dashboard v14 inyecta la config con el token __RULESCFG__ (plantilla
+    blindada con try/catch + re-render inicial). Reemplazo de tokens en UNA
+    pasada (regex) para que datos inyectados no puedan pisar otros tokens.
+  - ORDEN DE DESPLIEGUE OBLIGATORIO: funcion dashboard PRIMERO, plantilla despues.
+
+  OTRAS CORRECCIONES DEL CUESTIONARIO:
+  - B2/B5: Handoff fijado a hora Colombia: hoDays cuenta dias CALENDARIO
+    Bogota (antes bloques de 24h) y hoFecha formatea con timeZone America/Bogota
+    (antes reloj del navegador).
+  - B8: 'pendiente' explicito en sync-panels (Dropi PC + refreshStatus pendiente).
+  - C4: Set AREAS sin uso eliminado del handoff (el area es texto libre a proposito).
+  - C6: reopen conserva la resolucion previa como avance [REAPERTURA] en el
+    seguimiento; valida la lectura antes de escribir (si falla, NO pisa nada);
+    404 si la tarjeta no existe.
+  - B9: build-history con techo 150k eventos y campo 'truncado' (ok:false si
+    trunca de verdad -> alerta); flag sin falso positivo en el borde.
+  - B10 DESCARTADO: era un falso hallazgo del cuestionario. delayAll es
+    [promedio, n, b0..b5] = 8 elementos; el default de 8 ceros es correcto.
+  - sync-capacity v6: jornada y festivos desde app_config; festivo = 5.5h
+    (como sabado); el dia OFF gana sobre el festivo; guardas anti-NaN.
+
+  VALIDACION SEMANAL (decision D7/F):
+  - Nueva funcion verify-refresh + cron 'verify-refresh-weekly' (viernes 17:00
+    Colombia): compara conf/canc de los ultimos 4 dias completos de
+    events_history contra el reporte interno de Refresh. Tolerancia 0.5%
+    (verify_tolerancia) + piso de 15 ordenes (verify_min_ordenes) para que las
+    canceladas de bajo volumen no hagan ruido. CUALQUIER fallo (login, reporte,
+    parser) escribe last_verify y avisa por correo ("no pudo correr").
+    Parser por claves exactas; ?debug=1 muestra la forma cruda del reporte.
+  - Foto de referencia congelada para la migracion: tablas fixture_20260827_events
+    y fixture_20260827_cohort. OJO: las exclusiones por substring (B1) pueden
+    mover levemente el nivel de las series desde hoy; si se nota un escalon,
+    re-congelar la foto la semana del 1-sep.
+
+  DOCS: HANDOFF_TECNICO corregido (C3 delay Resultados vs alarma Lider, C5
+  jornada configurable, C9 matiz __AB64__, Gest/hora Opcion C). DECISIONES.md
+  con D-005..D-009. Pregunta abierta al equipo (D4): ¿el discador registra el
+  tiempo conectado (login/logout) del agente?
+
+  CALIBRACION DE verify-refresh (mismo dia, 2026-08-27):
+  - El reporte de Refresh devuelve buckets FIJOS: Hoy (parcial), Ayer, Anteayer
+    y "Ultimos 4 dias" (ACUMULADO: sumarlo todo duplica). Ignora el rango pedido.
+  - Medido con datos reales (Ayer+Anteayer): confirmadas dashboard +5.4% vs
+    reporte; canceladas -45%. NO es perdida de datos: las fuentes cuentan
+    distinto A PROPOSITO (el dashboard excluye buzones, reclasifica "Nueva
+    orden" y NO registra cancelaciones fuera de la app, que son muchas).
+  - Consecuencia: la tolerancia ABSOLUTA de 0.5% (decision D7) es inaplicable
+    entre estas dos fuentes. verify-refresh v3 usa LINEA BASE + DESVIACION:
+    guarda la razon dashboard/Refresh (conf 1.0537, canc 0.5472 al calibrar) y
+    alerta si esa razon se desvia mas de verify_desviacion % (default 10) --
+    eso SI detecta perdida de datos. Re-calibrar: borrar app_config
+    'verify_baseline'. Compara solo dias completos (Ayer+Anteayer).
+  - NOTA: la corrida de calibracion del 27-ago disparo UNA alerta por correo a
+    Karen antes del ajuste (la version v2 aun comparaba absoluto). Fue falsa
+    alarma de calibracion, no un incidente.

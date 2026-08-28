@@ -1,18 +1,31 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { norm, isExcludedAgent } from "./rules.ts";
 
 const SURL = Deno.env.get("SUPABASE_URL")!;
 const SR = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const DBH = { apikey: SR, Authorization: `Bearer ${SR}`, "Content-Type": "application/json" } as Record<string,string>;
 const REFRESH = "https://api-refresh.fenix-ventures.co/bff";
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
-async function cfg(key: string): Promise<string> { const r = await fetch(`${SURL}/rest/v1/app_config?key=eq.${encodeURIComponent(key)}&select=value`, { headers: DBH }); const j = await r.json(); return (j && j[0] && j[0].value) || ""; }
+async function cfg(key: string): Promise<string> {
+  // Con reintento: un fallo transitorio leyendo app_config no debe confundirse con llave invalida.
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetch(`${SURL}/rest/v1/app_config?key=eq.${encodeURIComponent(key)}&select=value`, { headers: DBH });
+      const j = await r.json();
+      if (Array.isArray(j)) return (j[0] && j[0].value) || "";
+    } catch (_) { /* reintenta */ }
+    await new Promise((res) => setTimeout(res, 500));
+  }
+  return "";
+}
 const DAY = 86400000;
 function gapNoSun(a: number, b: number): number { let n = 0; for (let d = a + 1; d <= b; d++) { if (new Date(d * DAY).getUTCDay() !== 0) n++; } return n; }
-const norm = (s: string) => (s || "").trim().replace(/\s+/g, " ").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 Deno.serve(async (req: Request) => {
   const wk = req.headers.get("x-write-key") || "";
-  if (!wk || wk !== (await cfg("write_key"))) return json({ error: "unauthorized" }, 401);
+  const stored = await cfg("write_key");
+  if (!stored) return json({ error: "config no disponible (transitorio)" }, 503);
+  if (wk !== stored) return json({ error: "unauthorized" }, 401);
   const url = new URL(req.url);
   const force = url.searchParams.get("force") === "1";
   const col = new Date(Date.now() - 5 * 3600000);
@@ -65,9 +78,11 @@ Deno.serve(async (req: Request) => {
     const amRows = Object.entries(amRun).map(([id, name]) => ({ id, name }));
     if (amRows.length) await fetch(`${SURL}/rest/v1/agent_map`, { method: "POST", headers: { ...DBH, Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(amRows) });
 
-    const EXAG = new Set(["postfecha fenix", "reprogramadas operacion", "sin gestion", "seguimiento historico"]);
-    const isEx = (n: string) => { const x = norm(n); return EXAG.has(x) || x.indexOf("postfecha") >= 0 || x.indexOf("sin gestion") >= 0; };
-    const isPC = (o: any) => norm(o.ds) === "pendiente confirmacion";
+    const isEx = (n: string) => isExcludedAgent(n);
+    // 'Pendiente' EXPLICITO (decision B8): estado Dropi pendiente Y estado Refresh pendiente,
+    // sin confiar en que el pull solo trajo pendientes.
+    const PENDRS = new Set(["ASSIGNED", "REPROGRAMMED", "UNASSIGNED"]);
+    const isPC = (o: any) => norm(o.ds) === "pendiente confirmacion" && PENDRS.has(o.rs);
     const real = (o: any) => o.an && o.an !== "(sin agente)" && !isEx(o.an);
 
     const OF = O.filter((o) => isPC(o) && !isEx(o.an));

@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { isExcludedAgent } from "./rules.ts";
 
 const SURL = Deno.env.get("SUPABASE_URL")!;
 const SR = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -7,15 +8,23 @@ const REFRESH = "https://api-refresh.fenix-ventures.co/bff";
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
 
 async function cfg(key: string): Promise<string> {
-  const r = await fetch(`${SURL}/rest/v1/app_config?key=eq.${encodeURIComponent(key)}&select=value`, { headers: DBH });
-  const j = await r.json();
-  return (j && j[0] && j[0].value) || "";
+  // Con reintento: un fallo transitorio leyendo app_config no debe confundirse con llave invalida.
+  for (let i = 0; i < 3; i++) {
+    try {
+      const r = await fetch(`${SURL}/rest/v1/app_config?key=eq.${encodeURIComponent(key)}&select=value`, { headers: DBH });
+      const j = await r.json();
+      if (Array.isArray(j)) return (j[0] && j[0].value) || "";
+    } catch (_) { /* reintenta */ }
+    await new Promise((res) => setTimeout(res, 500));
+  }
+  return "";
 }
 
 Deno.serve(async (req: Request) => {
   const wk = req.headers.get("x-write-key") || "";
   const stored = await cfg("write_key");
-  if (!stored || wk !== stored) return json({ error: "unauthorized" }, 401);
+  if (!stored) return json({ error: "config no disponible (transitorio)" }, 503);
+  if (wk !== stored) return json({ error: "unauthorized" }, 401);
 
   const url = new URL(req.url);
   const force = url.searchParams.get("force") === "1";
@@ -52,14 +61,18 @@ Deno.serve(async (req: Request) => {
 
     const amRun: Record<string, string> = {};
     const CACHE_ROWS: any[] = [];
+    // Errores HTTP de la API: se acumulan y se reportan (antes se tragaban en silencio).
+    const PULL_ERR: string[] = [];
     async function pull(st: string[], extra: any) {
       let of = 0;
-      for (let pg = 0; pg < 30; pg++) {
-        const b: any = { dropiStoreIds: [], dropiOrderStatusIds: [], refreshOrderStatusIds: st, agentIds: [], dropiOrderIds: [], limit: 400, offset: of, startDate: S, endDate: E, ...extra };
+      // Paginacion robusta: recorrer hasta pagina vacia (NO cortar en pagina parcial).
+      for (let pg = 0; pg < 40; pg++) {
+        const b: any = { dropiStoreIds: [], dropiOrderStatusIds: [], refreshOrderStatusIds: st, agentIds: [], dropiOrderIds: [], limit: 1000, offset: of, startDate: S, endDate: E, ...extra };
         const r = await fetch(`${REFRESH}/orders/`, { method: "POST", headers: H, body: JSON.stringify(b) });
-        if (r.status !== 200) return;
+        if (r.status !== 200) { PULL_ERR.push(st.join(",") + " pg" + pg + " http" + r.status); return; }
         const j: any = await r.json();
         const rows = j.orders || [];
+        if (rows.length === 0) break;
         for (const o of rows) {
           if (o.agent && o.agent.id) amRun[o.agent.id] = ((o.agent.name || "") + " " + (o.agent.surname || "")).trim();
           if (o.dropiOrderId == null) continue;
@@ -67,8 +80,7 @@ Deno.serve(async (req: Request) => {
           const cd = o.dropiCreationDate ? String(o.dropiCreationDate).slice(0, 10) : S_date;
           CACHE_ROWS.push({ id: rec.id, status: st[0], rec, created_date: cd });
         }
-        if (rows.length < 400) break;
-        of += 400;
+        of += rows.length;
       }
     }
     await pull(["CONFIRMED"], { startDateConfirmation: confSince, endDateConfirmation: E });
@@ -106,9 +118,8 @@ Deno.serve(async (req: Request) => {
     // como CONFIRMADA efectiva del agente que la trabajo (sube efectividad; no cuenta como cancelacion).
     // 'Pedido de prueba' sigue excluido por completo.
     const EXCL = new Set(["Nueva orden", "Pedido de prueba"]);
-    const norm = (s: string) => (s || "").trim().replace(/\s+/g, " ").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
-    const EXAG = new Set(["postfecha fenix", "reprogramadas operacion", "sin gestion", "seguimiento historico"]);
-    const isEx = (n: string) => EXAG.has(norm(n));
+    // Exclusion de pseudo-agentes por SUBSTRING via reglas compartidas (decision B1).
+    const isEx = (n: string) => isExcludedAgent(n);
     const Sm = +new Date(S), Em = +new Date(E);
     const win = (t: any) => { const x = t ? +new Date(t) : NaN; return x >= Sm && x < Em; };
     const dstr = (t: any) => new Date(t).toISOString().slice(0, 10);
@@ -139,7 +150,7 @@ Deno.serve(async (req: Request) => {
     const data = { meta: { start: S, end: E, orders: OO.length, gen: new Date().toISOString() }, agents, dates, countries, stores, reasons, events, callCube: callC, delayByAgent: dba, delayAll: [+(dA.s / dA.n).toFixed(2), dA.n, ...dA.b] };
 
     await fetch(`${SURL}/rest/v1/snapshot`, { method: "POST", headers: { ...DBH, Prefer: "return=minimal" }, body: JSON.stringify({ data }) });
-    return json({ ok: true, cache: OO.length, nuevos: urows.length, eventos: events.length, agentes: agents.length, dias: dates });
+    return json({ ok: PULL_ERR.length === 0, pull_err: PULL_ERR, cache: OO.length, nuevos: urows.length, eventos: events.length, agentes: agents.length, dias: dates });
   } catch (e) {
     return json({ error: String(e) }, 500);
   }
