@@ -864,3 +864,15 @@ SESION 2026-08-28 - Colector de presencia de agentes (hallazgo D4)
   PENDIENTE (del hallazgo de Karen): confirmar si el discador telefonico es
   un sistema aparte de Refresh con reporte de tiempo logueado (seria el dato
   exacto). Si existe, reemplaza esta estimacion.
+
+  CIERRE DE LA PREGUNTA DEL DISCADOR (confirmado por Karen, 2026-08-28):
+  - El discador SI es un sistema aparte: AIRCALL. Pero sus usuarios son
+    COMPARTIDOS entre agentes -> el tiempo logueado de Aircall NO es
+    atribuible por agente. Ademas, en Ecuador y Guatemala se llama por
+    WhatsApp, que tampoco registra tiempo conectado.
+  - Conclusion: NO existe fuente exacta de tiempo conectado por agente.
+    Gest/hora queda DEFINITIVAMENTE con la estimacion por jornada (Opcion C).
+  - El colector agent_presence (isOnline de Refresh, por agente) sigue
+    activo y es el UNICO proxy por-agente disponible: en unas semanas
+    permitira comparar jornada asumida vs presencia real en Refresh y
+    decidir si vale afinar la estimacion.
