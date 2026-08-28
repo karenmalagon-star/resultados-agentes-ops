@@ -221,3 +221,46 @@ grant execute on function public.monitor_checks() to service_role;
 --   alert_webhook_url : URL del webhook de N8N que envia el correo
 --   alert_token       : secreto compartido que valida el webhook
 --   monitor_state     : estado interno anti-spam del monitor (lo maneja la funcion)
+
+-- ============================================================
+-- Presencia de agentes (hallazgo D4, 2026-08-28)
+-- Refresh solo expone isOnline instantaneo: un cron cada 5 min acumula muestras.
+-- horas estimadas de un dia = muestras * 5 / 60 (precision ±5 min).
+-- SOLO recolecta: ninguna metrica lo usa aun (decision pendiente con datos).
+-- ============================================================
+create table if not exists public.agent_presence (
+  dia        date not null,
+  agent_id   text not null,
+  agent_name text,
+  primera    timestamptz not null,
+  ultima     timestamptz not null,
+  muestras   integer not null default 0,
+  primary key (dia, agent_id)
+);
+revoke all on public.agent_presence from anon;
+revoke all on public.agent_presence from authenticated;
+
+create or replace function public.presence_tick(p_agents jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  n int := 0;
+  r jsonb;
+  v_dia date := (now() at time zone 'America/Bogota')::date;
+begin
+  for r in select * from jsonb_array_elements(coalesce(p_agents, '[]'::jsonb)) loop
+    insert into public.agent_presence (dia, agent_id, agent_name, primera, ultima, muestras)
+    values (v_dia, r->>'id', r->>'name', now(), now(), 1)
+    on conflict (dia, agent_id) do update
+      set ultima = now(), muestras = public.agent_presence.muestras + 1, agent_name = excluded.agent_name;
+    n := n + 1;
+  end loop;
+  return n;
+end $fn$;
+revoke execute on function public.presence_tick(jsonb) from public;
+revoke execute on function public.presence_tick(jsonb) from anon;
+revoke execute on function public.presence_tick(jsonb) from authenticated;
+grant execute on function public.presence_tick(jsonb) to service_role;

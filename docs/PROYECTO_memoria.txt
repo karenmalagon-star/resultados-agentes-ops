@@ -832,3 +832,35 @@ SESION 2026-08-27 - Decisiones del cuestionario de Karen IMPLEMENTADAS
   - NOTA: la corrida de calibracion del 27-ago disparo UNA alerta por correo a
     Karen antes del ajuste (la version v2 aun comparaba absoluto). Fue falsa
     alarma de calibracion, no un incidente.
+
+========================================================================
+SESION 2026-08-28 - Colector de presencia de agentes (hallazgo D4)
+========================================================================
+  HALLAZGO (sondeo de Karen, verificado): Refresh NO expone tiempo de
+  conexion/desconexion del agente. Lo unico que existe es GET /users/ con el
+  campo isOnline (instantaneo). Gest/hora queda como estimacion por jornada
+  (Opcion C) mientras no haya dato mejor.
+
+  DECISION: como la presencia NO se puede reconstruir hacia atras, se activo
+  YA el colector propio (camino 1 del hallazgo) para ir acumulando datos,
+  SIN tocar ninguna metrica. Usar este dato en Gest/hora sera una decision
+  aparte cuando haya semanas de historia.
+
+  PIEZAS:
+  - Tabla public.agent_presence (dia, agent_id, agent_name, primera, ultima,
+    muestras). Horas estimadas del dia = muestras * 5 / 60 (precision ±5 min).
+  - RPC presence_tick(jsonb): upsert atomico por (dia Colombia, agente).
+  - Edge Function sync-presence (usa rules.ts): login -> GET /users/ paginado
+    (exige limit/offset numericos; sin params responde 400) -> filtra rol
+    'agent' y pseudo-agentes -> tick. Gate 6:00-22:00 Colombia. ?debug=1
+    devuelve el censo de roles.
+  - Cron sync-presence-5m: cada 5 minutos.
+
+  CENSO DE /users/ (2026-08-28): 1.111 usuarios = 1.016 dropshipper +
+  76 agent + 19 administrator. El filtro por rol es OBLIGATORIO: sin el,
+  se registraria la presencia de duenos de tienda y admins.
+  Probado en vivo: 11 agentes online registrados a las 14:45 Colombia.
+
+  PENDIENTE (del hallazgo de Karen): confirmar si el discador telefonico es
+  un sistema aparte de Refresh con reporte de tiempo logueado (seria el dato
+  exacto). Si existe, reemplaza esta estimacion.
