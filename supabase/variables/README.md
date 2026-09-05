@@ -7,6 +7,7 @@ Reglamento: `~/Documents/fenix-dashboard-ops/ESPECIFICACION_VARIABLES_v1.md` (v1
 | `001_hardening.sql` | endurecimiento previo a publicar la anon key (v_tiendas, revokes, RLS) | 2026-09-05 |
 | `002_tables.sql` | tablas `var_*` con RLS sin políticas + triggers de mes liquidado | 2026-09-05 |
 | `003_functions.sql` | ayudantes, config, `var_asignar`, `var_ritmo_vivo`, `var_resumen_mes` (porcentajes; sin dinero) | 2026-09-05 |
+| `004_search_path.sql` | search_path fijo en las 8 funciones SQL (aviso del asesor) | 2026-09-05 |
 | `tests/sprint1_puras.sql` | 23 pruebas de funciones puras (todas en verde el 2026-09-05) | — |
 | `../functions/variables/index.ts` | Edge Function: valida el JWT contra Auth, rol desde `var_usuarios`, acciones×rol, proyección por lista blanca | v1, `verify_jwt=false` (validación propia) |
 | `../../equipo/index.html` | página única con vistas por rol (`/equipo/`) | se publica al mergear a `main` (GitHub Pages) |
