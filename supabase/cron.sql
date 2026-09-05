@@ -65,3 +65,13 @@ $cmd$);
 -- Crons de SQL puro (sin cambios; los crea/mantiene el proyecto original):
 --   events-history-append  '5,35 * * * *'  -> inserta en events_history
 --   cohort-history-append  '30 12 * * *'   -> inserta en cohort_history
+
+-- Muestreo de presencia de agentes cada 5 min (gate horario 6:00-22:00 dentro de la funcion)
+select cron.schedule('sync-presence-5m', '*/5 * * * *', $cmd$
+  insert into public.cron_calls(req_id, fn)
+  select net.http_post(
+    url := 'https://sbiyedqpqtiqvlgentci.supabase.co/functions/v1/sync-presence',
+    headers := jsonb_build_object('Content-Type','application/json',
+               'x-write-key', (select value from app_config where key='write_key')),
+    body := '{}'::jsonb, timeout_milliseconds := 90000), 'sync-presence';
+$cmd$);

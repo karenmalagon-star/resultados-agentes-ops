@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>¿Cómo va cada uno?</title>
+<!-- Módulo de compensación · pantalla única con vistas por rol (diseño técnico §6).
+     Regla de la casa: en las vistas de Equipo y Auditoría no aparece ninguna alusión a dinero (spec §4).
+     El servidor ya filtra; esta página solo pinta lo que recibe. -->
+<style>
+  :root{--bg:#0f172a;--card:#111c33;--line:#233254;--tx:#e6ecf7;--mut:#93a4c3;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--acc:#3b82f6}
+  *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--tx)}
+  header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--line);background:#0b1327;position:sticky;top:0;z-index:5}
+  header h1{font-size:20px;margin:0;flex:1}header .who{color:var(--mut);font-size:13px}
+  nav a{color:var(--mut);text-decoration:none;padding:6px 10px;border-radius:8px;cursor:pointer;font-size:14px}nav a.on{background:var(--acc);color:#fff}
+  main{padding:16px 20px;max-width:1400px;margin:0 auto}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.grow{flex:1}
+  label{font-size:13px;color:var(--mut)}input,select,textarea,button{font:inherit;border-radius:8px;border:1px solid var(--line);background:#0b1327;color:var(--tx);padding:8px 10px}
+  button{background:var(--acc);border-color:var(--acc);color:#fff;cursor:pointer}button.sec{background:transparent;color:var(--tx)}button:disabled{opacity:.5;cursor:default}
+  table{width:100%;border-collapse:collapse;font-size:15px}th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td:first-child,th:first-child{text-align:left}tr.click{cursor:pointer}tr.click:hover td{background:#16223f}
+  tr.total td{font-weight:700;border-top:2px solid var(--line);background:#0b1327}
+  .big table{font-size:19px}.big td,.big th{padding:12px 12px}
+  .sem{display:inline-block;width:10px;height:10px;border-radius:50%;margin-left:6px;vertical-align:middle}.g{background:var(--ok)}.y{background:var(--warn)}.r{background:var(--bad)}.n{background:#475569}
+  .mut{color:var(--mut)}.small{font-size:12px}.tag{display:inline-block;padding:2px 8px;border-radius:999px;background:#1e293b;color:var(--mut);font-size:12px;margin-left:6px}
+  .banner{padding:10px 14px;border-radius:10px;margin-bottom:12px;font-size:14px}.banner.warn{background:#3b2a07;border:1px solid #92400e}.banner.info{background:#0c2a4a;border:1px solid #1d4ed8}
+  .login{max-width:380px;margin:12vh auto}.login input{width:100%;margin:6px 0 12px}.err{color:#fca5a5;font-size:13px;min-height:18px}
+  #popup{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:50}
+  #popup .box{background:#7f1d1d;border:2px solid #fca5a5;border-radius:16px;padding:28px 32px;max-width:640px;width:92%;font-size:20px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  #popup .box h2{margin:0 0 12px;font-size:26px}#popup .box .k{color:#fecaca;font-size:14px;text-transform:uppercase;letter-spacing:.06em}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="titulo">¿Cómo va cada uno?</h1>
+  <nav id="nav"></nav>
+  <span class="who" id="who"></span>
+  <button class="sec small" id="btnSonido" title="Los navegadores exigen un clic para permitir sonido">🔔 Activar sonido</button>
+  <button class="sec small" id="btnSalir">Cerrar sesión</button>
+</header>
+<main id="main"></main>
+
+<div id="popup"><div class="box">
+  <h2>⚠️ Error de auditoría registrado</h2>
+  <div><span class="k">Agente</span><br><b id="pAgente"></b></div>
+  <div style="margin-top:8px"><span class="k">Tienda · Producto</span><br><span id="pTienda"></span></div>
+  <div style="margin-top:8px"><span class="k">Qué sucedió</span><br><span id="pDesc"></span></div>
+  <div style="margin-top:18px;text-align:right"><button id="pCerrar">Entendido</button></div>
+</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+// ---------- configuración pública (la anon key es pública por diseño; RLS sin políticas protege la base) ----------
+var SUPABASE_URL = "https://sbiyedqpqtiqvlgentci.supabase.co";
+var ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNiaXllZHFwcXRpcXZsZ2VudGNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5MjUzNzMsImV4cCI6MjEwMDUwMTM3M30.gLtEQl6L7u0fuDs7lD8YM8gWCaH3B9BM2ai51KUbp-c";
+var FN = SUPABASE_URL + "/functions/v1/variables";
+var sb = supabase.createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: true, detectSessionInUrl: true, autoRefreshToken: true } });
+
+var yo = null, vista = "matriz", lastErrId = null, audioCtx = null, timers = [];
+var $ = function (id) { return document.getElementById(id); };
+var main = $("main");
+var ESTADOS = [["verificacion","Verificación"],["v_historica","V. Histórica"],["novedades","Novedades"],["apoyo","Apoyo"],["ausencia","Ausencia"],["incapacidad","Incapacidad"]];
+var NOMBRE_ESTADO = {}; ESTADOS.forEach(function (e) { NOMBRE_ESTADO[e[0]] = e[1]; });
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+function fmt(n, d) { return n == null ? "—" : Number(n).toFixed(d == null ? 1 : d).replace(".", ","); }
+function pct(n) { return n == null ? "—" : fmt(n, 0) + "%"; }
+function sem(c) { if (c == null) return '<span class="sem n"></span>'; return '<span class="sem ' + (c >= 100 ? "g" : c >= 90 ? "y" : "r") + '"></span>'; }
+function hoyISO(d) { d = d || new Date(); var c = new Date(d.getTime() - 5 * 3600000); return c.toISOString().slice(0, 10); } // hora Colombia
+function mesISO() { return hoyISO().slice(0, 7); }
+function ayerISO(f) { var d = new Date(f + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); }
+function clearTimers() { timers.forEach(clearInterval); timers = []; }
+
+async function api(action, body) {
+  var s = (await sb.auth.getSession()).data.session;
+  if (!s) throw new Error("sesión vencida");
+  var r = await fetch(FN, { method: "POST", headers: { "Content-Type": "application/json", "apikey": ANON_KEY, "Authorization": "Bearer " + s.access_token }, body: JSON.stringify(Object.assign({ action: action }, body || {})) });
+  var t = await r.text(); var j = {}; try { j = t ? JSON.parse(t) : {}; } catch (e) { j = { error: t }; }
+  if (!r.ok) { var e = new Error(j.error || ("error " + r.status)); e.status = r.status; e.data = j; throw e; }
+  return j;
+}
+
+// ---------- sonido del pop-up ----------
+$("btnSonido").onclick = function () { try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); beep(); $("btnSonido").textContent = "🔔 Sonido activo"; $("btnSonido").disabled = true; } catch (e) {} };
+function beep() { if (!audioCtx) return; var t = audioCtx.currentTime; [0, .35, .7].forEach(function (o) { var osc = audioCtx.createOscillator(), g = audioCtx.createGain(); osc.frequency.value = 880; g.gain.setValueAtTime(.0001, t + o); g.gain.exponentialRampToValueAtTime(.4, t + o + .02); g.gain.exponentialRampToValueAtTime(.0001, t + o + .3); osc.connect(g).connect(audioCtx.destination); osc.start(t + o); osc.stop(t + o + .32); }); }
+function mostrarPopup(e) { $("pAgente").textContent = e.agente || "—"; $("pTienda").textContent = (e.tienda || "—") + " · " + (e.producto || "—"); $("pDesc").textContent = e.descripcion || ""; $("popup").style.display = "flex"; beep(); }
+$("pCerrar").onclick = function () { $("popup").style.display = "none"; };
+async function pollErrores() {
+  try {
+    var r = await api("errores", { desde: lastErrId == null ? 0 : lastErrId });
+    if (lastErrId == null) { lastErrId = r.errores.length ? r.errores[r.errores.length - 1].id : 0; return; } // primera carga: no alertar lo viejo
+    r.errores.forEach(function (e) { lastErrId = Math.max(lastErrId, e.id); mostrarPopup(e); });
+  } catch (e) { /* silencioso */ }
+}
+
+// ---------- login / fijar contraseña ----------
+function vistaLogin(msg) {
+  clearTimers(); $("nav").innerHTML = ""; $("who").textContent = ""; $("btnSalir").classList.add("hidden"); $("btnSonido").classList.add("hidden");
+  main.innerHTML = '<div class="card login"><h2 style="margin-top:0">Ingreso</h2><label>Correo</label><input id="u" type="email" autocomplete="username"><label>Contraseña</label><input id="p" type="password" autocomplete="current-password"><button id="go" style="width:100%">Entrar</button><div class="err" id="e">' + esc(msg || "") + '</div></div>';
+  var go = async function () { $("e").textContent = ""; $("go").disabled = true; var r = await sb.auth.signInWithPassword({ email: $("u").value.trim(), password: $("p").value }); $("go").disabled = false; if (r.error) { $("e").textContent = "No fue posible entrar: revisa correo y contraseña."; return; } arrancar(); };
+  $("go").onclick = go; $("p").onkeydown = function (ev) { if (ev.key === "Enter") go(); };
+}
+function vistaFijarClave() {
+  main.innerHTML = '<div class="card login"><h2 style="margin-top:0">Fija tu contraseña</h2><p class="mut small">Mínimo 8 caracteres. Nadie más la conoce.</p><label>Nueva contraseña</label><input id="p1" type="password" autocomplete="new-password"><label>Repítela</label><input id="p2" type="password" autocomplete="new-password"><button id="go" style="width:100%">Guardar</button><div class="err" id="e"></div></div>';
+  $("go").onclick = async function () { var a = $("p1").value, b = $("p2").value; if (a.length < 8) { $("e").textContent = "Mínimo 8 caracteres."; return; } if (a !== b) { $("e").textContent = "No coinciden."; return; } var r = await sb.auth.updateUser({ password: a }); if (r.error) { $("e").textContent = r.error.message; return; } history.replaceState(null, "", location.pathname); arrancar(); };
+}
+
+// ---------- arranque ----------
+async function arrancar() {
+  var s = (await sb.auth.getSession()).data.session;
+  if (!s) return vistaLogin();
+  try { yo = await api("yo"); } catch (e) { if (e.status === 403) { await sb.auth.signOut(); return vistaLogin("Tu usuario aún no está activado. Pide a un administrador que te asigne un rol."); } return vistaLogin("No fue posible cargar tu perfil."); }
+  $("who").textContent = yo.nombre + " · " + ({ admin: "Administración", auditoria: "Auditoría", equipo: "Líder" }[yo.rol] || yo.rol);
+  $("btnSalir").classList.remove("hidden"); $("btnSonido").classList.remove("hidden");
+  var tabs = [["matriz", "¿Cómo va cada uno?"]];
+  if (yo.rol === "equipo" || yo.rol === "admin") tabs.push(["asignar", "Asignación del día"]);
+  if (yo.rol === "auditoria" || yo.rol === "admin") tabs.push(["error", "Registrar error"]);
+  if (yo.rol === "admin") tabs.push(["admin", "Admin"]);
+  $("nav").innerHTML = tabs.map(function (t) { return '<a data-v="' + t[0] + '">' + t[1] + "</a>"; }).join("");
+  Array.prototype.forEach.call($("nav").children, function (a) { a.onclick = function () { ir(a.getAttribute("data-v")); }; });
+  clearTimers(); lastErrId = null; pollErrores(); timers.push(setInterval(pollErrores, 15000));
+  ir("matriz");
+}
+$("btnSalir").onclick = async function () { clearTimers(); await sb.auth.signOut(); vistaLogin(); };
+function ir(v) { vista = v; Array.prototype.forEach.call($("nav").children, function (a) { a.classList.toggle("on", a.getAttribute("data-v") === v); }); ({ matriz: vistaMatriz, asignar: vistaAsignar, error: vistaError, admin: vistaAdmin }[v] || vistaMatriz)(); }
+
+// ---------- ¿Cómo va cada uno? ----------
+var matrizMes = mesISO(), matrizTurno = "";
+async function vistaMatriz() {
+  main.innerHTML = '<div class="card"><div class="row"><label>Mes <input id="mes" type="month" value="' + matrizMes + '"></label><label>Turno <select id="turno"><option value="">Todos</option><option value="M">Mañana</option><option value="T">Tarde</option></select></label><span class="grow"></span><span class="mut small" id="meta"></span></div></div><div id="ban"></div><div class="card big" id="tabla">Cargando…</div><div id="detalle"></div>';
+  $("mes").value = matrizMes; $("turno").value = matrizTurno;
+  $("mes").onchange = function () { matrizMes = $("mes").value; cargarMatriz(); }; $("turno").onchange = function () { matrizTurno = $("turno").value; cargarMatriz(); };
+  await cargarMatriz();
+  timers.push(setInterval(function () { if (vista === "matriz") cargarMatriz(); }, 60000));
+}
+function cargoPrincipal(a) { var cs = a.cargos || []; var c = cs.filter(function (x) { return x.cargo === a.cargo_hoy && x.medible; })[0] || cs.filter(function (x) { return x.medible; }).sort(function (x, y) { return y.gest - x.gest; })[0]; return c || null; }
+async function cargarMatriz() {
+  var r; try { r = await api("matriz", { mes: matrizMes }); } catch (e) { $("tabla").innerHTML = '<span class="err">' + esc(e.message) + "</span>"; return; }
+  $("meta").textContent = "Acumulado hasta " + (r.hasta || "") + " · actualizado " + new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+  var ban = "";
+  if (r.mes === mesISO() && r.asignaciones_hoy === 0) { var h = new Date(Date.now() - 5 * 3600000).getUTCHours(); if (h >= 7) ban += '<div class="banner warn">📋 Hoy todavía no hay asignación del día. Sin asignación, el día no se mide.</div>'; }
+  if (r.sin_asignar && r.sin_asignar.length) ban += '<div class="banner info">Hay ' + r.sin_asignar.length + ' día(s) con gestiones sin asignación o marcados como ausencia. Revísalos en Asignación del día.</div>';
+  $("ban").innerHTML = ban;
+  var ags = (r.agentes || []).filter(function (a) { return !matrizTurno || a.turno_hoy === matrizTurno || (a.dias || []).some(function (d) { return d.turno === matrizTurno; }); });
+  var h = '<table><thead><tr><th>Agente <span class="mut">(cargo hoy)</span></th><th>Efectividad</th><th>Cumpl.</th><th>Cancelación</th><th>Cumpl.</th><th>Ritmo mes (' + esc(r.compuerta_ritmo) + ')</th><th>En vivo*</th><th>Puntualidad</th></tr></thead><tbody>';
+  ags.forEach(function (a) {
+    var c = cargoPrincipal(a); var vivo = a.en_vivo && a.en_vivo.ritmo != null ? fmt(a.en_vivo.ritmo) : "—";
+    h += '<tr class="click" data-id="' + esc(a.agent_id) + '"><td>' + esc(a.nombre) + '<span class="tag">' + esc(NOMBRE_ESTADO[a.cargo_hoy] || "sin asignar") + (a.turno_hoy ? " · " + (a.turno_hoy === "M" ? "mañana" : "tarde") : "") + "</span></td>";
+    if (c) h += "<td>" + pct(c.efectividad_real) + "</td><td>" + pct(c.efectividad_cumpl) + sem(c.efectividad_cumpl) + "</td><td>" + pct(c.cancelacion_real) + "</td><td>" + pct(c.cancelacion_cumpl) + sem(c.cancelacion_cumpl) + "</td><td>" + fmt(c.ritmo) + (c.compuerta == null ? "" : c.compuerta ? " ✅" : " ⛔") + "</td>";
+    else h += '<td class="mut">—</td><td class="mut">—</td><td class="mut">—</td><td class="mut">—</td><td class="mut">—</td>';
+    h += "<td>" + vivo + '</td><td class="mut">—</td></tr>';
+  });
+  var cons = r.consolidado || {};
+  Object.keys(cons).sort().forEach(function (t) { if (matrizTurno && t !== matrizTurno) return; var c = cons[t]; h += '<tr class="total"><td>Consolidado turno ' + (t === "M" ? "mañana" : "tarde") + "</td><td>" + pct(c.efectividad_real) + "</td><td>" + pct(c.efectividad_cumpl) + sem(c.efectividad_cumpl) + "</td><td>" + pct(c.cancelacion_real) + "</td><td>" + pct(c.cancelacion_cumpl) + sem(c.cancelacion_cumpl) + "</td><td>" + fmt(c.ritmo) + (c.compuerta == null ? "" : c.compuerta ? " ✅" : " ⛔") + '</td><td></td><td></td></tr>'; });
+  h += '</tbody></table><p class="mut small">🟢 ≥100% · 🟡 90 a &lt;100% · 🔴 &lt;90% · * en vivo = orientativo, cronómetro desde la primera gestión del día. Clic en un agente para ver el detalle diario.</p>';
+  $("tabla").innerHTML = h;
+  Array.prototype.forEach.call($("tabla").querySelectorAll("tr.click"), function (tr) { tr.onclick = function () { var a = ags.filter(function (x) { return x.agent_id === tr.getAttribute("data-id"); })[0]; detalle(a); }; });
+}
+function detalle(a) {
+  if (!a) return;
+  var h = '<div class="card"><div class="row"><h3 style="margin:0" class="grow">' + esc(a.nombre) + ' · detalle diario</h3><button class="sec" onclick="document.getElementById(\'detalle\').innerHTML=\'\'">Cerrar</button></div>';
+  h += "<table><thead><tr><th>Fecha</th><th>Estado</th><th>Turno</th><th>Gestiones</th><th>Confirmadas</th><th>Canceladas</th><th>Reprogramadas</th><th>Horas</th></tr></thead><tbody>";
+  (a.dias || []).forEach(function (d) { h += "<tr><td>" + esc(d.fecha) + "</td><td>" + esc(NOMBRE_ESTADO[d.estado] || (d.estado || "sin asignar")) + "</td><td>" + (d.turno === "M" ? "mañana" : d.turno === "T" ? "tarde" : "—") + "</td><td>" + d.gest + "</td><td>" + d.conf + "</td><td>" + d.canc + "</td><td>" + d.reprog + "</td><td>" + fmt(d.horas) + "</td></tr>"; });
+  h += "</tbody></table><h4>Acumulado por cargo</h4><table><thead><tr><th>Cargo</th><th>Días</th><th>Gestiones</th><th>Efectividad</th><th>Cumpl.</th><th>Cancelación</th><th>Cumpl.</th><th>Ritmo</th></tr></thead><tbody>";
+  (a.cargos || []).forEach(function (c) { h += "<tr><td>" + esc(NOMBRE_ESTADO[c.cargo] || c.cargo) + "</td><td>" + c.dias + "</td><td>" + c.gest + "</td><td>" + pct(c.efectividad_real) + "</td><td>" + pct(c.efectividad_cumpl) + "</td><td>" + pct(c.cancelacion_real) + "</td><td>" + pct(c.cancelacion_cumpl) + "</td><td>" + fmt(c.ritmo) + "</td></tr>"; });
+  $("detalle").innerHTML = h + "</tbody></table></div>"; $("detalle").scrollIntoView({ behavior: "smooth" });
+}
+
+// ---------- Asignación del día ----------
+async function vistaAsignar() {
+  var hoy = hoyISO();
+  main.innerHTML = '<div class="card"><div class="row"><label>Fecha <input id="f" type="date" value="' + hoy + '" max="' + hoy + '"></label><label>Turno <select id="t"><option value="M">Mañana</option><option value="T">Tarde</option></select></label>' + (yo.rol === "admin" ? '<label>Líder que firma <select id="lider"><option value="">Yo</option></select></label>' : "") + '<button class="sec" id="copiar">Copiar la de ayer</button><span class="grow"></span><button id="guardar">Guardar asignación</button></div><div class="err" id="e"></div></div><div class="card" id="lista">Cargando…</div>';
+  var roster = (await api("roster")).agentes;
+  if (yo.rol === "admin") { try { var us = await api("usuarios"); us.usuarios.filter(function (u) { return u.activo && (u.rol === "equipo" || u.rol === "admin"); }).forEach(function (u) { var o = document.createElement("option"); o.value = u.auth_uid; o.textContent = u.nombre; $("lider").appendChild(o); }); } catch (e) {} }
+  function pintar(asg) {
+    var por = {}; (asg || []).forEach(function (a) { por[a.agent_id] = a; });
+    if (asg && asg.length) { var ts = asg.map(function (a) { return a.turno; }); $("t").value = ts.sort(function (a, b) { return ts.filter(function (v) { return v === a; }).length - ts.filter(function (v) { return v === b; }).length; }).pop(); }
+    var h = "<table><thead><tr><th>Agente</th><th>Estado del día</th><th>Firmó</th></tr></thead><tbody>";
+    roster.forEach(function (r) { var a = por[r.agent_id]; h += "<tr><td>" + esc(r.nombre) + '</td><td style="text-align:left"><select data-id="' + esc(r.agent_id) + '"><option value="">— sin asignar —</option>' + ESTADOS.map(function (e) { return '<option value="' + e[0] + '"' + (a && a.estado === e[0] ? " selected" : "") + ">" + e[1] + "</option>"; }).join("") + '</select></td><td class="mut small">' + (a ? esc(a.lider) : "") + "</td></tr>"; });
+    $("lista").innerHTML = h + "</tbody></table>" + (roster.length ? "" : '<p class="mut">El roster está vacío: un administrador debe cargar los agentes en Admin → Agentes.</p>');
+  }
+  async function cargar(f) { try { pintar((await api("asignaciones", { fecha: f })).asignaciones); } catch (e) { $("e").textContent = e.message; } }
+  $("f").onchange = function () { cargar($("f").value); };
+  $("copiar").onclick = async function () { var ayer = (await api("asignaciones", { fecha: ayerISO($("f").value) })).asignaciones; var ok = ayer.filter(function (a) { return a.estado !== "ausencia" && a.estado !== "incapacidad"; }); pintar(ok); $("e").textContent = ok.length ? "Copiada la de " + ayerISO($("f").value) + ". Revisa y guarda." : "Ayer no había asignación."; };
+  $("guardar").onclick = async function () {
+    var items = []; Array.prototype.forEach.call($("lista").querySelectorAll("select[data-id]"), function (s) { if (s.value) items.push({ agent_id: s.getAttribute("data-id"), estado: s.value }); });
+    if (!items.length) { $("e").textContent = "No hay nada que guardar."; return; }
+    $("guardar").disabled = true; $("e").textContent = "Guardando…";
+    try { var body = { fecha: $("f").value, turno: $("t").value, items: items }; if (yo.rol === "admin" && $("lider").value) body.lider_uid = $("lider").value; var r = await api("asignar", body); var errs = r.resultados.filter(function (x) { return x.error; }); $("e").textContent = errs.length ? "Guardado con " + errs.length + " problema(s): " + errs.map(function (x) { return x.agent_id + ": " + x.error; }).join(" · ") : "✅ Asignación guardada (" + items.length + " agentes)."; cargar($("f").value); }
+    catch (e) { $("e").textContent = (e.status === 409 ? "Otro usuario acaba de corregir esta fecha; recarga. " : "") + e.message; }
+    $("guardar").disabled = false;
+  };
+  await cargar(hoy);
+}
+
+// ---------- Registrar error (auditoría) ----------
+async function vistaError() {
+  main.innerHTML = '<div class="card" style="max-width:720px"><h3 style="margin-top:0">Registrar error de auditoría</h3><p class="mut small">Al guardar, aparece de inmediato en la pantalla del equipo, con sonido.</p><div class="grid2"><label>Agente<br><select id="ag" style="width:100%"></select></label><label>Tienda<br><input id="ti" list="tiendas" style="width:100%" placeholder="Escribe o elige"><datalist id="tiendas"></datalist></label></div><label>Producto<br><input id="pr" style="width:100%"></label><label>Qué sucedió<br><textarea id="de" rows="4" style="width:100%"></textarea></label><div class="row" style="margin-top:10px"><button id="go">Registrar</button><span class="err" id="e"></span></div></div>';
+  var r = await api("roster"); $("ag").innerHTML = '<option value="">— elige —</option>' + r.agentes.map(function (a) { return '<option value="' + esc(a.agent_id) + '">' + esc(a.nombre) + "</option>"; }).join("");
+  try { var t = await api("tiendas"); $("tiendas").innerHTML = t.tiendas.map(function (x) { return "<option>" + esc(x) + "</option>"; }).join(""); } catch (e) {}
+  $("go").onclick = async function () { $("e").textContent = ""; if (!$("ag").value || $("de").value.trim().length < 3) { $("e").textContent = "Elige el agente y describe qué sucedió."; return; } $("go").disabled = true; try { await api("registrar_error", { agent_id: $("ag").value, tienda: $("ti").value, producto: $("pr").value, descripcion: $("de").value }); $("e").textContent = "✅ Registrado."; $("de").value = ""; $("pr").value = ""; } catch (e) { $("e").textContent = e.message; } $("go").disabled = false; };
+}
+
+// ---------- Admin (Sprint 1: usuarios, agentes/alias, configuración) ----------
+async function vistaAdmin() {
+  main.innerHTML = '<div class="card"><div class="row"><button class="sec" data-t="usuarios">Usuarios y roles</button><button class="sec" data-t="agentes">Agentes y alias</button><button class="sec" data-t="config">Configuración del mes</button></div></div><div id="adm"></div>';
+  Array.prototype.forEach.call(main.querySelectorAll("button[data-t]"), function (b) { b.onclick = function () { ({ usuarios: admUsuarios, agentes: admAgentes, config: admConfig }[b.getAttribute("data-t")])(); }; });
+  admUsuarios();
+}
+async function admUsuarios() {
+  var r = await api("usuarios"); var con = {}; r.usuarios.forEach(function (u) { con[u.auth_uid] = u; });
+  var h = '<div class="card"><h3 style="margin-top:0">Personas invitadas en Supabase Auth</h3><p class="mut small">Las cuentas se crean desde el panel de Supabase (Authentication → Invite user). Aquí solo se asigna el rol.</p><table><thead><tr><th>Correo</th><th>Nombre</th><th>Rol</th><th>Activo</th><th>Ingreso</th><th>Configura</th><th></th></tr></thead><tbody>';
+  r.auth.forEach(function (a) { var u = con[a.id] || {}; h += '<tr data-id="' + a.id + '" data-email="' + esc(a.email) + '"><td style="text-align:left">' + esc(a.email) + '</td><td><input class="n" value="' + esc(u.nombre || "") + '"></td><td><select class="r"><option value="">—</option><option value="equipo"' + (u.rol === "equipo" ? " selected" : "") + '>Líder (equipo)</option><option value="auditoria"' + (u.rol === "auditoria" ? " selected" : "") + '>Auditoría</option><option value="admin"' + (u.rol === "admin" ? " selected" : "") + '>Admin</option></select></td><td><input type="checkbox" class="a"' + (u.activo !== false ? " checked" : "") + '></td><td><input type="date" class="fi" value="' + esc(u.fecha_ingreso || "") + '"></td><td><input type="checkbox" class="pc"' + (u.puede_configurar ? " checked" : "") + '></td><td><button class="sec g">Guardar</button></td></tr>'; });
+  $("adm").innerHTML = h + '</tbody></table><div class="err" id="e"></div></div>';
+  Array.prototype.forEach.call($("adm").querySelectorAll("tr[data-id]"), function (tr) { tr.querySelector(".g").onclick = async function () { var rol = tr.querySelector(".r").value; if (!rol) { $("e").textContent = "Elige un rol."; return; } try { await api("usuario_set", { auth_uid: tr.getAttribute("data-id"), email: tr.getAttribute("data-email"), nombre: tr.querySelector(".n").value, rol: rol, activo: tr.querySelector(".a").checked, fecha_ingreso: tr.querySelector(".fi").value || null, puede_configurar: tr.querySelector(".pc").checked }); $("e").textContent = "✅ Guardado."; } catch (e) { $("e").textContent = e.message; } }; });
+}
+async function admAgentes() {
+  var r = await api("agentes"); var aliasPor = {}; r.alias.forEach(function (a) { (aliasPor[a.agent_id] = aliasPor[a.agent_id] || []).push(a.nombre_norm); });
+  var h = '<div class="card"><h3 style="margin-top:0">Roster del equipo</h3><table><thead><tr><th>Agente</th><th>Activo</th><th>Alias (nombres en la historia)</th><th></th></tr></thead><tbody>';
+  r.roster.forEach(function (a) { h += '<tr data-id="' + esc(a.agent_id) + '"><td style="text-align:left">' + esc(a.nombre) + '</td><td><input type="checkbox" class="act"' + (a.activo ? " checked" : "") + '></td><td style="text-align:left" class="small mut">' + esc((aliasPor[a.agent_id] || []).join(" · ")) + ' <input class="al" placeholder="agregar alias" style="width:160px"></td><td><button class="sec g">Guardar</button></td></tr>'; });
+  h += '</tbody></table></div><div class="card"><h3 style="margin-top:0">Agentes de Refresh aún no en el roster</h3><p class="mut small">Marca solo a los agentes del equipo de operaciones (no buzones ni dropshippers).</p><table><tbody>';
+  r.candidatos.forEach(function (c) { h += '<tr data-cid="' + esc(c.id) + '" data-cn="' + esc(c.name) + '"><td style="text-align:left">' + esc(c.name) + '</td><td><button class="sec add">Agregar al roster</button></td></tr>'; });
+  $("adm").innerHTML = h + '</tbody></table><div class="err" id="e"></div></div>';
+  Array.prototype.forEach.call($("adm").querySelectorAll("tr[data-id]"), function (tr) { tr.querySelector(".g").onclick = async function () { try { var nombre = tr.children[0].textContent; await api("agente_set", { agent_id: tr.getAttribute("data-id"), nombre: nombre, activo: tr.querySelector(".act").checked }); var al = tr.querySelector(".al").value.trim(); if (al) await api("alias_set", { agent_id: tr.getAttribute("data-id"), nombre: al }); admAgentes(); } catch (e) { $("e").textContent = e.message; } }; });
+  Array.prototype.forEach.call($("adm").querySelectorAll("tr[data-cid]"), function (tr) { tr.querySelector(".add").onclick = async function () { try { await api("agente_set", { agent_id: tr.getAttribute("data-cid"), nombre: tr.getAttribute("data-cn"), activo: true }); admAgentes(); } catch (e) { $("e").textContent = e.message; } }; });
+}
+async function admConfig() {
+  var mes = mesISO();
+  $("adm").innerHTML = '<div class="card"><div class="row"><label>Mes <input id="cm" type="month" value="' + mes + '"></label><span class="grow"></span>' + (yo.puede_configurar ? '<label>Motivo (obligatorio si el mes ya empezó) <input id="mot" style="width:320px"></label><button id="cs">Guardar versión nueva</button>' : '<span class="mut small">Solo lectura: no tienes permiso de configuración.</span>') + '</div><p class="mut small" id="ci"></p><textarea id="cj" rows="28" style="width:100%;font-family:ui-monospace,monospace;font-size:12px"></textarea><div class="err" id="e"></div></div>';
+  async function cargar() { var r = await api("config_get", { mes: $("cm").value }); var c = r.config; $("ci").textContent = "Versión " + c._version + (c._default ? " (de fábrica: no hay configuración guardada)" : c._heredada ? " (heredada de " + c._mes_origen + ")" : "") + "."; $("cj").value = JSON.stringify(c, null, 2); }
+  $("cm").onchange = cargar; await cargar();
+  if ($("cs")) $("cs").onclick = async function () { try { var c = JSON.parse($("cj").value); var r = await api("config_set", { mes: $("cm").value, config: c, motivo: $("mot").value }); $("e").textContent = "✅ Guardada la versión " + r.version + "."; cargar(); } catch (e) { $("e").textContent = e.message; } };
+}
+
+// ---------- inicio ----------
+(function () {
+  var hash = location.hash || "";
+  if (/type=(invite|recovery|signup|magiclink)/.test(hash)) { sb.auth.onAuthStateChange(function (ev, s) { if (s && (ev === "SIGNED_IN" || ev === "PASSWORD_RECOVERY" || ev === "INITIAL_SESSION")) vistaFijarClave(); }); setTimeout(function () { sb.auth.getSession().then(function (r) { if (r.data.session) vistaFijarClave(); else vistaLogin("El enlace venció o ya fue usado. Pide una invitación nueva."); }); }, 1200); return; }
+  arrancar();
+})();
+</script>
+</body>
+</html>
