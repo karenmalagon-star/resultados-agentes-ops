@@ -47,6 +47,11 @@
   .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}.kpi{background:var(--sur2);border-radius:12px;padding:12px 14px}.kpi .v{font-family:Manrope;font-weight:800;font-size:26px;line-height:1.1}.kpi .l{font-size:12px;color:var(--mut);margin-top:4px}
   .placeholder{border:2px dashed var(--line);border-radius:12px;padding:22px;color:var(--mut);text-align:center;font-size:14px}
   .legend{color:var(--mut);font-size:12px;margin-top:8px}.hidden{display:none!important}
+  .ojo{border:0;background:transparent;color:var(--acc);cursor:pointer;font-size:16px;padding:0 4px;vertical-align:middle;line-height:1}.ojo:hover{transform:scale(1.15)}
+  #modal{position:fixed;inset:0;background:rgba(6,10,20,.7);display:none;align-items:center;justify-content:center;z-index:40}
+  #modal .mbox{background:var(--sur);border:1px solid var(--line);border-radius:16px;padding:22px 26px;max-width:1100px;width:94%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+  #modal .mscroll{overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:10px;flex:1}#modal table th{position:sticky;top:0;background:var(--sur2)}
+  .tipo{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600}.tipo.c{background:var(--ok-soft);color:var(--ok)}.tipo.x{background:var(--bad-soft);color:var(--bad)}.tipo.r{background:var(--warn-soft);color:var(--warn)}
   .cfg td,.cfg th{text-align:left}.cfg td.n{text-align:right}
   .login{max-width:380px;margin:12vh auto}.login input{width:100%;margin:6px 0 12px}
   #popup{position:fixed;inset:0;background:rgba(6,10,20,.7);display:none;align-items:center;justify-content:center;z-index:50}
@@ -66,6 +71,12 @@
   <div class="tabs" id="tabs"></div>
 </div>
 <main id="main"></main>
+<div id="modal"><div class="mbox">
+  <div class="row"><h2 id="mtit" class="grow" style="font-size:20px">Detalle de gestión</h2><button class="sec" onclick="document.getElementById('modal').style.display='none'">✕</button></div>
+  <div class="mut small" id="msub" style="font-size:13px"></div>
+  <div class="mscroll"><table><thead><tr><th class="n">ID Dropi</th><th class="n">Celular</th><th>Tipo</th><th>Fecha / hora</th><th style="text-align:left">Motivo</th><th style="text-align:left">Tienda</th></tr></thead><tbody id="mbody"></tbody></table></div>
+  <div class="row" style="margin-top:12px"><span class="grow legend" id="mnota"></span><button id="mexp">Exportar Excel</button></div>
+</div></div>
 <div id="popup"><div class="box" id="pbox">
   <h2>⚠️ Error de auditoría registrado</h2>
   <div class="k">Agente</div><div class="v" id="pAgente"></div>
@@ -130,7 +141,16 @@ function pintarTabs(){var vis=TABS.filter(function(t){return t[2].indexOf(yo.rol
 var R=null,mesSel=mesISO(),diaSel=null;
 async function cargarResumen(){var body={mes:mesSel};if(diaSel)body.dia=diaSel;R=await api("matriz",body);return R}
 function bloqueMes(a){var cs=a.cargos||[];return cs.filter(function(c){return c.cargo===a.cargo_hoy&&c.medible})[0]||cs.filter(function(c){return c.medible}).sort(function(x,y){return y.gest-x.gest})[0]||null}
-function filaTabla(nombre,tag,b,metas,cargo,aud,esDia,general){
+var ORD=null;
+async function verOrdenes(agent_id,nombre,desde,hasta,rotulo){
+  $("mtit").textContent="Detalle de gestión — "+nombre+" · "+rotulo;$("msub").textContent="Cargando…";$("mbody").innerHTML="";$("modal").style.display="flex";
+  try{var r=await api("ordenes",{agent_id:agent_id,desde:desde,hasta:hasta});ORD=r;
+    $("msub").textContent="Total Gest "+r.total+" | Conf "+r.conf+" | Canc "+r.canc+" | Reprog "+r.reprog+" · del "+desde+" al "+hasta;
+    $("mbody").innerHTML=r.ordenes.map(function(o){return'<tr><td class="n">'+esc(o.orden)+'</td><td class="n">'+esc(o.celular||"—")+'</td><td><span class="tipo '+(o.tipo==="Confirmada"?"c":o.tipo==="Cancelada"?"x":"r")+'">'+esc(o.tipo)+'</span></td><td>'+esc(o.fecha)+' '+esc(o.hora)+'</td><td style="text-align:left">'+esc(o.motivo||"—")+'</td><td style="text-align:left">'+esc(o.tienda||"—")+'</td></tr>'}).join("")||'<tr><td colspan="6" class="mut">Sin órdenes gestionadas en este rango.</td></tr>';
+    $("mnota").textContent="Hora con precisión de media hora. El celular aparece para las órdenes descargadas desde que se activó su captura; las anteriores muestran —."}
+  catch(e){$("msub").textContent=e.message}}
+$("mexp").onclick=function(){if(!ORD)return;var lines=[["ID Dropi","Celular","Tipo","Fecha","Hora","Motivo","Tienda"]].concat(ORD.ordenes.map(function(o){return[o.orden,o.celular||"",o.tipo,o.fecha,o.hora,o.motivo||"",o.tienda||""]}));var csv="\ufeff"+lines.map(function(l){return l.map(function(v){return'"'+String(v==null?"":v).replace(/"/g,'""')+'"'}).join(";")}).join("\r\n");var a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));a.download="gestion_"+ORD.agent_id+"_"+ORD.desde+"_"+ORD.hasta+".csv";document.body.appendChild(a);a.click();a.remove()};
+function filaTabla(nombre,tag,b,metas,cargo,aud,esDia,general,ojo){
   var m=cargo&&metas[cargo]?metas[cargo]:{};var medible=b&&b.medible!==false&&m.medible;
   var h='<td>'+nombre+(tag?'<span class="cargo">'+tag+'</span>':'')+'</td>';
   if(b&&medible){h+='<td class="sep n">'+pct(b.efectividad_real)+'</td><td class="n">'+pct(m.efectividad)+'</td><td>'+pill(b.efectividad_cumpl)+'</td>';
@@ -140,12 +160,12 @@ function filaTabla(nombre,tag,b,metas,cargo,aud,esDia,general){
   h+='<td class="sep n">—</td><td class="n">&lt; 3</td><td>'+(esDia?'<span class="pill n">mensual</span>':'<span class="pill n">manual</span>')+'</td>';
   if(esDia){h+='<td class="sep n">—</td><td class="n">—</td><td><span class="pill n">mensual</span></td>'}
   else{var am=R.auditoria_meta_pct;h+='<td class="sep n">'+(aud&&aud.pct!=null?pct(aud.pct,1):"—")+'</td><td class="n">'+(am==null?"por definir":"≤ "+pct(am,0))+'</td><td>'+(aud?cumpleTxt(aud.cumpl):'<span class="pill n">—</span>')+'</td>'}
-  h+='<td class="sep gen">'+(general==null?'<span class="pill n">—</span>':pct(general,0))+'</td>';return h}
+  h+='<td class="sep gen">'+(general==null?'<span class="pill n">—</span>':pct(general,0))+(ojo?' <button class="ojo" title="Ver las órdenes gestionadas" data-ojo="'+esc(ojo)+'">👁</button>':'')+'</td>';return h}
 function tablaResumen(titulo,sub,esDia){
   var ags=(R.agentes||[]).map(function(a){var b=esDia?a.dia:bloqueMes(a);var cargo=esDia?(b?b.cargo:null):(b?b.cargo:a.cargo_hoy);return{a:a,b:b,cargo:cargo,general:b?b.general:null}}).sort(function(x,y){return(y.general==null?-1:y.general)-(x.general==null?-1:x.general)});
   var h='<div class="card big"><h2>'+titulo+' <small>'+sub+'</small></h2><div class="wrap"><table><thead><tr><th></th><th class="grp" colspan="3">Efectividad</th><th class="grp" colspan="3">Cancelación</th><th class="grp" colspan="3">Gestiones</th><th class="grp" colspan="3">Puntualidad</th><th class="grp" colspan="3">Auditoría</th><th class="grp">General</th></tr>';
   h+='<tr><th>Agente (cargo · turno)</th>'+'<th class="sep n">Real</th><th class="n">Meta</th><th>Cumpl.</th>'.repeat(5)+'<th class="sep">Cumpl.</th></tr></thead><tbody>';
-  ags.forEach(function(f,i){var a=f.a;var tag=esc(NOMBRE[f.cargo]||"sin asignar")+(a.turno_hoy?" · "+turnoTxt(esDia&&f.b?f.b.turno:a.turno_hoy):"");h+='<tr class="click" data-id="'+esc(a.agent_id)+'">'+filaTabla('<span class="rank">'+(i+1)+'</span>'+esc(a.nombre),tag,f.b,R.metas||{},f.cargo,a.auditoria,esDia,f.general)+'</tr>'});
+  ags.forEach(function(f,i){var a=f.a;var tag=esc(NOMBRE[f.cargo]||"sin asignar")+(a.turno_hoy?" · "+turnoTxt(esDia&&f.b?f.b.turno:a.turno_hoy):"");h+='<tr class="click" data-id="'+esc(a.agent_id)+'">'+filaTabla('<span class="rank">'+(i+1)+'</span>'+esc(a.nombre),tag,f.b,R.metas||{},f.cargo,a.auditoria,esDia,f.general,a.agent_id+"|"+(esDia?"d":"m"))+'</tr>'});
   if(!esDia){var cons=R.consolidado||{};Object.keys(cons).sort().forEach(function(t){var c=cons[t];var L=c.lider||(R.lideres||{})[t];var rot=L?(L.etiqueta||"Líder")+" · "+L.nombre:"Turno "+turnoTxt(t);
     h+='<tr class="total"><td>'+esc(rot)+'<span class="cargo">'+turnoTxt(t)+' esta semana</span></td><td class="sep n">'+pct(c.efectividad_real)+'</td><td></td><td>'+pill(c.efectividad_cumpl)+'</td><td class="sep n">'+pct(c.cancelacion_real)+'</td><td></td><td>'+pill(c.cancelacion_cumpl)+'</td><td class="sep n">'+fmt(c.ritmo)+'</td><td class="n">'+fmt(R.compuerta_ritmo,0)+'</td><td>'+(c.ritmo==null?'<span class="pill n">—</span>':cumpleTxt(c.compuerta))+'</td><td class="sep"></td><td></td><td></td><td class="sep"></td><td></td><td></td><td class="sep gen">'+(c.general==null?"—":pct(c.general,0))+'</td></tr>'})}
   h+='</tbody></table></div><div class="legend">Ordenados de mayor a menor cumplimiento general. 🟢 ≥100 % · 🟡 90 a &lt;100 % · 🔴 &lt;90 %. Las gestiones por hora son la compuerta: si el mes no llega a '+fmt(R.compuerta_ritmo,0)+', la Efectividad no cumple. Puntualidad y Auditoría se cumplen o no se cumplen.'+(esDia?' Las gestiones por hora de hoy son el cronómetro en vivo.':'')+' Clic en un agente para ver su detalle diario.</div></div>';
@@ -160,7 +180,8 @@ async function pintarResumen(){try{await cargarResumen()}catch(e){$("t1").innerH
   $("ban").innerHTML=ban;var d=R.dia||hoyISO();
   $("t1").innerHTML=tablaResumen(d===R.hoy?"Hoy":"Día "+d,d===R.hoy?d+" · en vivo, se actualiza cada minuto":"cifras cerradas del día",true);
   $("t2").innerHTML=tablaResumen("Acumulado del mes","del "+R.mes+"-01 al "+R.hasta+" · lo que se toma en cuenta al cierre",false);
-  Array.prototype.forEach.call(main.querySelectorAll("tr.click"),function(tr){tr.onclick=function(){var a=(R.agentes||[]).filter(function(x){return x.agent_id===tr.getAttribute("data-id")})[0];detalle(a)}})}
+  Array.prototype.forEach.call(main.querySelectorAll("tr.click"),function(tr){tr.onclick=function(ev){if(ev.target&&ev.target.classList.contains("ojo"))return;var a=(R.agentes||[]).filter(function(x){return x.agent_id===tr.getAttribute("data-id")})[0];detalle(a)}});
+  Array.prototype.forEach.call(main.querySelectorAll("button.ojo"),function(b){b.onclick=function(ev){ev.stopPropagation();var p=b.getAttribute("data-ojo").split("|");var a=(R.agentes||[]).filter(function(x){return x.agent_id===p[0]})[0];if(!a)return;var d=R.dia||hoyISO();if(p[1]==="d")verOrdenes(a.agent_id,a.nombre,d,d,d===R.hoy?"hoy":"día "+d);else verOrdenes(a.agent_id,a.nombre,R.mes+"-01",R.hasta,"acumulado del mes")}})}
 function detalle(a){if(!a)return;var h='<div class="card"><div class="row"><h3 style="margin:0" class="grow">'+esc(a.nombre)+' · detalle diario</h3><button class="sec" onclick="document.getElementById(\'detalle\').innerHTML=\'\'">Cerrar</button></div><div class="wrap"><table><thead><tr><th>Fecha</th><th>Cargo</th><th>Turno</th><th class="n">Gestiones</th><th class="n">Confirmadas</th><th class="n">Canceladas</th><th class="n">Reprogramadas</th><th class="n">Horas</th></tr></thead><tbody>';
   (a.dias||[]).forEach(function(d){h+='<tr><td>'+esc(d.fecha)+'</td><td>'+esc(NOMBRE[d.estado]||(d.estado||"sin asignar"))+'</td><td>'+turnoTxt(d.turno)+'</td><td class="n">'+d.gest+'</td><td class="n">'+d.conf+'</td><td class="n">'+d.canc+'</td><td class="n">'+d.reprog+'</td><td class="n">'+fmt(d.horas)+'</td></tr>'});
   h+='</tbody></table></div><h4>Acumulado por cargo</h4><div class="wrap"><table><thead><tr><th>Cargo</th><th class="n">Días</th><th class="n">Gestiones</th><th class="n">Efectividad</th><th>Cumpl.</th><th class="n">Cancelación</th><th>Cumpl.</th><th class="n">Gest./hora</th><th>General</th></tr></thead><tbody>';

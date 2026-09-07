@@ -61,6 +61,7 @@ Deno.serve(async (req: Request) => {
 
     const amRun: Record<string, string> = {};
     const CACHE_ROWS: any[] = [];
+    const CONTACT_ROWS: any[] = [];
     // Errores HTTP de la API: se acumulan y se reportan (antes se tragaban en silencio).
     const PULL_ERR: string[] = [];
     async function pull(st: string[], extra: any) {
@@ -79,6 +80,9 @@ Deno.serve(async (req: Request) => {
           const rec = { id: o.dropiOrderId, aname: o.agent ? ((o.agent.name || "") + " " + (o.agent.surname || "")).trim() : "(sin agente)", dc: o.dropiCreationDate, cf: o.confirmedAt, cx: o.cancelledAt, rid: o.rejection ? o.rejection.reasonId : null, co: (o.client && o.client.country) || o.country || "(sin pais)", st: o.dropiStore ? o.dropiStore.name : "(sin tienda)", ch: (o.callHistory || []).map((c: any) => [c.date, c.callDuration, c.userId]), rc: (o.reprogrammedCalls || []).filter((c: any) => c.clientUnreachable).map((c: any) => [c.date, c.agentId]) };
           const cd = o.dropiCreationDate ? String(o.dropiCreationDate).slice(0, 10) : S_date;
           CACHE_ROWS.push({ id: rec.id, status: st[0], rec, created_date: cd });
+          // Contacto del cliente por orden (para el detalle de gestión del módulo de compensación). Tabla permanente:
+          // orders_cache se purga a ~5 días, orders_contact no. Solo se guarda si Refresh trae teléfono.
+          if (o.client && o.client.phone) CONTACT_ROWS.push({ order_id: rec.id, phone: String(o.client.phone).slice(0, 40), client_name: (((o.client.name || "") + " " + (o.client.surname || "")).trim() || null), store: rec.st, updated_at: nowISO });
         }
         of += rows.length;
       }
@@ -94,6 +98,10 @@ Deno.serve(async (req: Request) => {
     for (let i = 0; i < urows.length; i += 800) {
       await fetch(`${SURL}/rest/v1/orders_cache`, { method: "POST", headers: { ...DBH, Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(urows.slice(i, i + 800)) });
     }
+    { const cm: any = {}; for (const r of CONTACT_ROWS) cm[r.order_id] = r; const crows = Object.values(cm);
+      for (let i = 0; i < crows.length; i += 800) {
+        await fetch(`${SURL}/rest/v1/orders_contact`, { method: "POST", headers: { ...DBH, Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(crows.slice(i, i + 800)) });
+      } }
     const amRows = Object.entries(amRun).map(([id, name]) => ({ id, name }));
     if (amRows.length) await fetch(`${SURL}/rest/v1/agent_map`, { method: "POST", headers: { ...DBH, Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(amRows) });
     await fetch(`${SURL}/rest/v1/orders_cache?created_date=lt.${S_date}`, { method: "DELETE", headers: { ...DBH, Prefer: "return=minimal" } });

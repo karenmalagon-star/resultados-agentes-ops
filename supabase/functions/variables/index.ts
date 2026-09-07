@@ -163,6 +163,13 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true, errores: rows.map((e: any) => ({ id: e.id, momento: e.momento, orden: e.orden, tienda: e.tienda, producto: e.producto, descripcion: e.descripcion, agente: e.agente?.nombre || "" })) });
       }
 
+      case "ordenes": {         // el "ojo": órdenes gestionadas por un agente en un rango (todos los roles)
+        const agent_id = String(body.agent_id || ""); const desde = String(body.desde || ""); const hasta = String(body.hasta || "");
+        if (!agent_id || !FECHA_RE.test(desde) || !FECHA_RE.test(hasta) || desde > hasta) return json({ error: "datos inválidos" }, 400);
+        const r = await rpc("var_ordenes_agente", { p_agent_id: agent_id, p_desde: desde, p_hasta: hasta });
+        return json({ ok: true, agent_id, desde, hasta, total: r.total, conf: r.conf, canc: r.canc, reprog: r.reprog,
+          ordenes: (r.ordenes || []).map((o: any) => ({ orden: o.orden, celular: o.celular, tipo: o.tipo, fecha: o.fecha, hora: o.hora, motivo: o.motivo, tienda: o.tienda })) });
+      }
       case "roster":
         return json({ ok: true, agentes: await getRows(`var_agente?activo=is.true&select=agent_id,nombre,cargo_permanente&order=nombre.asc`) });
 
