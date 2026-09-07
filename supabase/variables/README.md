@@ -11,6 +11,9 @@ Reglamento: `~/Documents/fenix-dashboard-ops/ESPECIFICACION_VARIABLES_v1.md` (v1
 | `005_maqueta_aprobada.sql` | cargo permanente, N/A, líderes por semana, órdenes auditadas, resumen v2 (Real·Meta·Cumpl., general) | 2026-09-05 |
 | `006_dinero.sql` | MOTOR DE DINERO (escalera, consolidado por líder, `var_calcular_mes` estimado para Admin); var_asignar conserva líder; domingos no cuentan como días | 2026-09-07 (revisado adversarialmente: 6 correcciones) |
 | `007_ordenes_agente.sql` | tabla permanente `orders_contact` (celular por orden, la llena sync-refresh v9) + `var_ordenes_agente` (el "ojo" del Resumen; celular sin espacios) | 2026-09-07 |
+| `008_tiendas_agente.sql` | `var_tiendas_agentes` (enteros por agente × tienda) y `var_ordenes_agente` con filtro de tienda | 2026-09-07 |
+| `009_resumen_rango.sql` | `var_resumen_mes(p_mes, p_dia, p_desde, p_hasta)`: filtro de fechas de la tabla mensual; `var_tiendas_agentes` de un solo agente (pop-up) | 2026-09-07 |
+| `010_ordenes_cronologico.sql` | el detalle de órdenes sale en orden cronológico (fecha, hora ascendentes) | 2026-09-07 |
 | `tests/sprint2_escalera.sql` | pruebas de la escalera y el prorrateo (en verde) | — |
 | `tests/sprint1_puras.sql` | 23 pruebas de funciones puras (todas en verde el 2026-09-05) | — |
 | `../functions/variables/index.ts` | Edge Function: valida el JWT contra Auth, rol desde `var_usuarios`, acciones×rol, proyección por lista blanca | v1, `verify_jwt=false` (validación propia) |
