@@ -100,7 +100,7 @@ function proyectarMatriz(r: any): any {
       cancelacion_real: c.cancelacion_real, cancelacion_cumpl: c.cancelacion_cumpl, ritmo: c.ritmo, compuerta: c.compuerta, general: c.general, lider: lider(c.lider) };
   }
   return {
-    mes: r.mes, hoy: r.hoy, hasta: r.hasta, dia: r.dia, estado: r.estado, compuerta_ritmo: r.compuerta_ritmo, auditoria_meta_pct: r.auditoria_meta_pct, asignaciones_hoy: r.asignaciones_hoy,
+    mes: r.mes, hoy: r.hoy, desde: r.desde, hasta: r.hasta, dia: r.dia, estado: r.estado, compuerta_ritmo: r.compuerta_ritmo, auditoria_meta_pct: r.auditoria_meta_pct, asignaciones_hoy: r.asignaciones_hoy,
     metas, lideres,
     agentes: (r.agentes || []).map((a: any) => ({
       agent_id: a.agent_id, nombre: a.nombre, cargo_permanente: a.cargo_permanente, cargo_hoy: a.cargo_hoy, turno_hoy: a.turno_hoy, asignado_hasta: a.asignado_hasta,
@@ -149,7 +149,9 @@ Deno.serve(async (req: Request) => {
         const mes = String(body.mes || "");
         if (!MES_RE.test(mes)) return json({ error: "mes inválido (YYYY-MM)" }, 400);
         const dia = typeof body.dia === "string" && FECHA_RE.test(body.dia) ? body.dia : null;
-        const r = await rpc("var_resumen_mes", { p_mes: `${mes}-01`, p_dia: dia });
+        const desde = typeof body.desde === "string" && FECHA_RE.test(body.desde) ? body.desde : null;   // filtro de fechas de la tabla mensual
+        const hasta = typeof body.hasta === "string" && FECHA_RE.test(body.hasta) ? body.hasta : null;
+        const r = await rpc("var_resumen_mes", { p_mes: `${mes}-01`, p_dia: dia, p_desde: desde, p_hasta: hasta });
         if (permitido("admin")) return json({ ok: true, ...r });
         const p = proyectarMatriz(r);
         const s = JSON.stringify(p);
@@ -163,6 +165,23 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true, errores: rows.map((e: any) => ({ id: e.id, momento: e.momento, orden: e.orden, tienda: e.tienda, producto: e.producto, descripcion: e.descripcion, agente: e.agente?.nombre || "" })) });
       }
 
+      case "ordenes": {         // el "ojo": órdenes gestionadas por un agente en un rango (todos los roles)
+        const agent_id = String(body.agent_id || ""); const desde = String(body.desde || ""); const hasta = String(body.hasta || "");
+        if (!agent_id || !FECHA_RE.test(desde) || !FECHA_RE.test(hasta) || desde > hasta) return json({ error: "datos inválidos" }, 400);
+        const tienda = typeof body.tienda === "string" && body.tienda ? String(body.tienda).slice(0, 200) : null;
+        const r = await rpc("var_ordenes_agente", { p_agent_id: agent_id, p_desde: desde, p_hasta: hasta, p_tienda: tienda });
+        return json({ ok: true, agent_id, desde, hasta, tienda, total: r.total, conf: r.conf, canc: r.canc, reprog: r.reprog,
+          ordenes: (r.ordenes || []).map((o: any) => ({ orden: o.orden, celular: o.celular, tipo: o.tipo, fecha: o.fecha, hora: o.hora, motivo: o.motivo, tienda: o.tienda })) });
+      }
+      case "tiendas_agentes": {  // pestañas Efectividad/Cancelación/Gestiones: enteros por agente × tienda (todos los roles)
+        const desde = String(body.desde || ""); const hasta = String(body.hasta || "");
+        if (!FECHA_RE.test(desde) || !FECHA_RE.test(hasta) || desde > hasta) return json({ error: "datos inválidos" }, 400);
+        const agente = typeof body.agent_id === "string" && body.agent_id ? String(body.agent_id) : null;   // pop-up de un agente
+        const r = await rpc("var_tiendas_agentes", { p_desde: desde, p_hasta: hasta, p_agent_id: agente });
+        return json({ ok: true, desde, hasta, agentes: (r.agentes || []).map((a: any) => ({ agent_id: a.agent_id, nombre: a.nombre, cargo_permanente: a.cargo_permanente,
+          total: { gest: a.total.gest, conf: a.total.conf, canc: a.total.canc, reprog: a.total.reprog },
+          tiendas: (a.tiendas || []).map((t: any) => ({ tienda: t.tienda, gest: t.gest, conf: t.conf, canc: t.canc, reprog: t.reprog })) })) });
+      }
       case "roster":
         return json({ ok: true, agentes: await getRows(`var_agente?activo=is.true&select=agent_id,nombre,cargo_permanente&order=nombre.asc`) });
 
