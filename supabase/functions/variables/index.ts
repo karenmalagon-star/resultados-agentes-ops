@@ -1,9 +1,9 @@
 // ============================================================================
-// Edge Function `variables` — Módulo de Variables (Sprint 1 + maqueta aprobada; sin dinero)
+// Edge Function `variables` — Módulo de Variables (Sprint 1 + maqueta aprobada + dinero para Admin)
 // DISENO_TECNICO_VARIABLES.md §2, §3.2, §3.5, §5.4
 //  · Se despliega con verify_jwt = false en el gateway y valida ELLA MISMA el
 //    token contra Auth (auth.getUser); el rol sale SOLO de var_usuarios.
-//  · Negar por defecto: cada acción lista sus roles.
+//  · Negar por defecto: cada acción lista sus roles. El dinero (acción `dinero`) solo para admin.
 //  · Para equipo/auditoria la respuesta de la matriz se CONSTRUYE con lista
 //    blanca y pasa por una aserción que falla cerrada (500 sin cuerpo).
 //  · CORS: orígenes permitidos en app_config 'variables_origins' (JSON array);
@@ -241,6 +241,11 @@ Deno.serve(async (req: Request) => {
       }
 
       // ---------------- solo admin ----------------
+      case "dinero": {          // monto estimado del mes por agente y líder — SOLO admin
+        if (!permitido("admin")) return negar();
+        const mes = String(body.mes || ""); if (!MES_RE.test(mes)) return json({ error: "mes inválido" }, 400);
+        return json({ ok: true, ...(await rpc("var_calcular_mes", { p_mes: `${mes}-01` })) });
+      }
       case "usuarios": {
         if (!permitido("admin")) return negar();
         const [auth, rows] = await Promise.all([rpc("var_auth_usuarios", {}), getRows(`var_usuarios?select=auth_uid,email,nombre,rol,activo,fecha_ingreso,puede_configurar,etiqueta&order=nombre.asc`)]);
