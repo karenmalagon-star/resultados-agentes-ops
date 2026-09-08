@@ -15,7 +15,8 @@ Reglamento: `~/Documents/fenix-dashboard-ops/ESPECIFICACION_VARIABLES_v1.md` (v1
 | `009_resumen_rango.sql` | `var_resumen_mes(p_mes, p_dia, p_desde, p_hasta)`: filtro de fechas de la tabla mensual; `var_tiendas_agentes` de un solo agente (pop-up) | 2026-09-07 |
 | `010_ordenes_cronologico.sql` | el detalle de órdenes sale en orden cronológico (fecha, hora ascendentes) | 2026-09-07 |
 | `011_dia_independiente.sql` | corrección de auditoría: la tabla del día no depende del rango filtrado de la tabla mensual; asignaciones_hoy siempre de hoy | 2026-09-07 |
-| `tests/sprint2_escalera.sql` | pruebas de la escalera y el prorrateo (en verde) | — |
+| `012_consolidado_dia.sql` | fila del líder (consolidado de su turno) también en la tabla de Hoy / Día: `var_horas_vivas` y clave `consolidado_dia` en `var_resumen_mes` | 2026-09-08 |
+| `tests/sprint2_escalera.sql` y `tests/sprint2_consolidado_dia.sql` | pruebas de la escalera y el prorrateo (en verde) | — |
 | `tests/sprint1_puras.sql` | 23 pruebas de funciones puras (todas en verde el 2026-09-05) | — |
 | `../functions/variables/index.ts` | Edge Function: valida el JWT contra Auth, rol desde `var_usuarios`, acciones×rol, proyección por lista blanca | v1, `verify_jwt=false` (validación propia) |
 | `../../equipo/index.html` | página única con vistas por rol (`/equipo/`) | se publica al mergear a `main` (GitHub Pages) |

@@ -93,12 +93,17 @@ function proyectarMatriz(r: any): any {
   for (const k of Object.keys(r.metas || {})) metas[k] = { efectividad: r.metas[k].efectividad, cancelacion: r.metas[k].cancelacion, medible: r.metas[k].medible };
   const lideres: any = {};
   for (const k of Object.keys(r.lideres || {})) lideres[k] = lider(r.lideres[k]);
-  const cons: any = {};
-  for (const k of Object.keys(r.consolidado || {})) {
-    const c = r.consolidado[k];
-    cons[k] = { gest: c.gest, conf: c.conf, canc: c.canc, efectividad_real: c.efectividad_real, efectividad_cumpl: c.efectividad_cumpl,
-      cancelacion_real: c.cancelacion_real, cancelacion_cumpl: c.cancelacion_cumpl, ritmo: c.ritmo, compuerta: c.compuerta, general: c.general, lider: lider(c.lider) };
-  }
+  const consolidar = (src: any) => {
+    const out: any = {};
+    for (const k of Object.keys(src || {})) {
+      const c = src[k];
+      out[k] = { gest: c.gest, conf: c.conf, canc: c.canc, efectividad_real: c.efectividad_real, efectividad_cumpl: c.efectividad_cumpl,
+        cancelacion_real: c.cancelacion_real, cancelacion_cumpl: c.cancelacion_cumpl, ritmo: c.ritmo, compuerta: c.compuerta, general: c.general, lider: lider(c.lider) };
+    }
+    return out;
+  };
+  const cons = consolidar(r.consolidado);
+  const consDia = consolidar(r.consolidado_dia);   // fila del líder en la tabla de Hoy / Día (012)
   return {
     mes: r.mes, hoy: r.hoy, desde: r.desde, hasta: r.hasta, dia: r.dia, estado: r.estado, compuerta_ritmo: r.compuerta_ritmo, auditoria_meta_pct: r.auditoria_meta_pct, asignaciones_hoy: r.asignaciones_hoy,
     metas, lideres,
@@ -107,7 +112,7 @@ function proyectarMatriz(r: any): any {
       dia: diaX(a.dia), auditoria: aud(a.auditoria), errores: a.errores,
       cargos: (a.cargos || []).map(cargo), dias: (a.dias || []).map(dia),
     })),
-    consolidado: cons,
+    consolidado: cons, consolidado_dia: consDia,
     sin_asignar: (r.sin_asignar || []).map((s: any) => ({ agent_id: s.agent_id, fecha: s.fecha, gest: s.gest, estado: s.estado })),
   };
 }
