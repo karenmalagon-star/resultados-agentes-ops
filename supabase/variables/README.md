@@ -25,3 +25,5 @@ Reglamento: `~/Documents/fenix-dashboard-ops/ESPECIFICACION_VARIABLES_v1.md` (v1
 **Pasos manuales en Supabase → Authentication (Karen/Daniel):** desactivar sign-up · SMTP propio · Site URL y Redirect URL =
 `https://karenmalagon-star.github.io/resultados-agentes-ops/equipo/` · invitar personas · en la página, Admin les asigna rol.
 El primer admin se crea con una fila directa en `var_usuarios` (SQL), una sola vez.
+
+**Identidad visual (8-sep-2026, aprobada por Daniel):** un solo tema claro; verde #0B6B3A y dorado #F5C21B/#E9A11D del logo; fuente Museo 700 (`equipo/fonts/Museo700.otf`); ningún texto en mayúsculas sostenidas (inicial mayúscula y el resto minúscula); logo = solo el círculo del isotipo, sin letras (provisional en SVG hasta recibir el archivo).

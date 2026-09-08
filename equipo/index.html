@@ -4,90 +4,98 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>¿Cómo va cada uno?</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
 <!-- Módulo de compensación · pantalla única con vistas por rol (maqueta aprobada por Daniel el 5-sep-2026).
      Regla de la casa: en las vistas de Líder y Auditoría no aparece ninguna alusión a dinero. El servidor ya filtra; esta página solo pinta lo que recibe. -->
 <style>
-  :root{--bg:#0c1222;--sur:#131b2e;--sur2:#1a2540;--line:#28365a;--tx:#e7ecf6;--mut:#94a3c0;--acc:#fb923c;--acc-soft:#3a1d0c;--ok:#4ade80;--ok-soft:#0f2e1c;--warn:#fbbf24;--warn-soft:#3a2a07;--bad:#f87171;--bad-soft:#3b1212}
+  /* Identidad Fénix Ventures (aprobada por Daniel el 8-sep-2026): verde #0B6B3A y dorado #F5C21B / #E9A11D del logo.
+     Un solo tema claro, plano y limpio. Tipografía de marca: Museo 700 (fonts/Museo700.otf). */
+  @font-face{font-family:"Museo 700";src:url(fonts/Museo700.otf) format("opentype");font-weight:700;font-style:normal;font-display:swap}
+  :root{--verde:#0B6B3A;--verde-osc:#075A30;--verde-tinte:#F1F7F3;--verde-linea:#CFE3D6;--dorado:#E9A11D;--dorado-2:#F5C21B;--dorado-tinte:#FBF3E1;
+        --bg:#FFFFFF;--sur2:#F6F8F6;--line:#E3E8E4;--tx:#1F2A23;--mut:#6B7A70;--ok:#0B6B3A;--warn:#B7791F;--bad:#B42318}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--tx);font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:15px;line-height:1.45}
-  h1,h2,h3{font-family:Manrope,"IBM Plex Sans",sans-serif;margin:0}
-  .n{font-variant-numeric:tabular-nums;font-family:"IBM Plex Mono","IBM Plex Sans",monospace;font-size:.93em}
-  .top{position:sticky;top:0;z-index:5;background:var(--sur);border-bottom:1px solid var(--line)}
-  .bar{display:flex;align-items:center;gap:14px;padding:12px 22px;flex-wrap:wrap}
-  .bar h1{font-size:21px;font-weight:800}.bar .sub{color:var(--mut);font-size:13px}
+  html{color-scheme:light}
+  body{margin:0;background:var(--bg);color:var(--tx);font-family:"Museo 700","Trebuchet MS",Verdana,sans-serif;font-weight:700;font-size:14px;line-height:1.5}
+  h1,h2,h3,h4{margin:0}
+  .n{font-variant-numeric:tabular-nums}
+  .top{position:sticky;top:0;z-index:5;background:#fff;border-top:4px solid var(--verde);border-bottom:1px solid var(--line)}
+  .bar{display:flex;align-items:center;gap:14px;padding:12px 28px 6px;flex-wrap:wrap}
+  .marca{display:flex;align-items:center;gap:14px}.marca svg,.marca img{width:46px;height:46px;display:block}
+  .bar h1{font-size:21px;color:var(--verde)}.bar .sub{color:var(--mut);font-size:12px;margin-top:2px}
   .who{margin-left:auto;color:var(--mut);font-size:13px}
-  .tabs{display:flex;gap:2px;padding:0 22px;overflow-x:auto}
-  .tabs button{border:0;background:transparent;color:var(--mut);padding:10px 14px;font:inherit;font-size:14px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap}
-  .tabs button.on{color:var(--tx);border-bottom-color:var(--acc);font-weight:600}
-  main{max-width:1500px;margin:0 auto;padding:18px 22px 60px;display:grid;gap:18px}
-  .card{background:var(--sur);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
-  .card h2{font-size:17px;font-weight:700;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.card h2 small{font-family:"IBM Plex Sans";font-weight:400;color:var(--mut);font-size:13px}
+  .tabs{display:flex;gap:4px;padding:0 28px;overflow-x:auto}
+  .tabs button{border:0;background:transparent;color:var(--mut);padding:10px 12px;font:inherit;font-size:14px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap}
+  .tabs button.on{color:var(--verde);border-bottom-color:var(--dorado-2)}
+  button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--dorado);outline-offset:2px}
+  main{max-width:1500px;margin:0 auto;padding:22px 28px 60px;display:grid;gap:22px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:18px 20px}
+  .card h2{font-size:16px;color:var(--verde);display:flex;align-items:center;gap:10px;flex-wrap:wrap}.card h2 small{color:var(--mut);font-size:12px}
+  .card h3{font-size:15px;color:var(--verde)}
   .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.grow{flex:1}
-  .note{background:var(--acc-soft);border:1px solid #7c3a12;border-radius:10px;padding:10px 14px;font-size:14px}.note b{color:var(--acc)}
-  .banner{padding:10px 14px;border-radius:10px;font-size:14px}.banner.warn{background:var(--warn-soft);border:1px solid #92400e}.banner.info{background:#0c2a4a;border:1px solid #1d4ed8}
+  .note{background:var(--verde-tinte);border-left:3px solid var(--verde);border-radius:0 6px 6px 0;padding:10px 14px;font-size:13px}.note b{color:var(--verde)}
+  .banner{padding:10px 14px;border-radius:6px;font-size:13px;border:1px solid var(--line)}.banner.warn{background:var(--dorado-tinte);border-color:#E7CF8E;color:#6B4E0B}.banner.info{background:var(--verde-tinte);border-color:var(--verde-linea);color:var(--verde-osc)}
   .wrap{overflow-x:auto}
-  table{width:100%;border-collapse:collapse;font-size:14px}
-  th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}
-  th{color:var(--mut);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.06em;vertical-align:bottom}
-  th.grp{text-align:center;border-bottom:2px solid var(--line);color:var(--tx);font-size:12px;background:var(--sur2)}th.grp+th.grp{border-left:1px solid var(--line)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}
+  th{color:var(--verde);font-size:11px;letter-spacing:.05em;vertical-align:bottom;background:var(--verde-tinte)}
+  th.grp{border-bottom:1px solid var(--verde-linea);font-size:11.5px}th.grp+th.grp{border-left:1px solid var(--verde-linea)}
   td.sep,th.sep{border-left:1px solid var(--line)}
-  tr.total td{font-weight:700;background:var(--sur2)}tr.click{cursor:pointer}tr.click:hover td{background:#16223f}
-  .big table{font-size:17px}.big td,.big th{padding:10px 12px}
-  .cargo{display:inline-block;font-size:11px;color:var(--mut);background:var(--sur2);border-radius:999px;padding:2px 8px;margin-left:6px;vertical-align:middle}
-  .pill{display:inline-block;min-width:58px;text-align:center;border-radius:999px;padding:2px 8px;font-weight:600;font-size:13px}
-  .pill.g{background:var(--ok-soft);color:var(--ok)}.pill.y{background:var(--warn-soft);color:var(--warn)}.pill.r{background:var(--bad-soft);color:var(--bad)}.pill.n{background:var(--sur2);color:var(--mut)}
-  .gen{font-weight:800;font-size:15px}.rank{display:inline-block;width:22px;color:var(--mut);font-size:12px}
+  tr.total td{background:var(--sur2);border-top:2px solid var(--verde-linea)}
+  tr.click{cursor:pointer}tr.click:hover td{background:var(--verde-tinte)}
+  .big table{font-size:14.5px}.big td,.big th{padding:10px 12px}
+  .cargo{display:inline-block;font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:4px;padding:1px 7px;margin-left:6px;vertical-align:middle}
+  .pill{display:inline-block;min-width:54px;text-align:center;font-size:13px;white-space:nowrap}
+  .pill::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle;background:#B8C2BB}
+  .pill.g{color:var(--ok)}.pill.g::before{background:var(--ok)}.pill.y{color:var(--warn)}.pill.y::before{background:var(--warn)}.pill.r{color:var(--bad)}.pill.r::before{background:var(--bad)}.pill.n{color:var(--mut)}
+  .gen{font-size:15px;color:var(--verde)}.rank{display:inline-block;width:22px;color:var(--mut);font-size:12px}
   label{font-size:13px;color:var(--mut)}
-  input,select,textarea,button{font:inherit;font-size:14px;border-radius:8px;border:1px solid var(--line);background:#0b1327;color:var(--tx);padding:7px 10px}
-  input.n{width:78px;text-align:right}select:disabled,input:disabled{opacity:.55}
-  button{background:var(--acc);border-color:var(--acc);color:#fff;cursor:pointer;font-weight:600}button.sec{background:transparent;color:var(--tx)}button:disabled{opacity:.5;cursor:default}
-  .lock{font-size:11px;color:var(--mut)}.err{color:#fca5a5;font-size:13px;min-height:18px}.mut{color:var(--mut)}.small{font-size:12px}
+  input,select,textarea,button{font:inherit;font-size:13px;border-radius:6px;border:1px solid var(--line);background:#fff;color:var(--tx);padding:7px 10px}
+  input.n{width:78px;text-align:right}select:disabled,input:disabled{opacity:.6;background:var(--sur2)}
+  button{background:var(--verde);border-color:var(--verde);color:#fff;cursor:pointer}button:hover{background:var(--verde-osc)}
+  button.sec{background:#fff;color:var(--verde);border-color:var(--verde)}button.sec:hover{background:var(--verde-tinte)}
+  button:disabled{opacity:.5;cursor:default}
+  .lock{font-size:11px;color:var(--mut)}.err{color:var(--bad);font-size:13px;min-height:18px}.mut{color:var(--mut)}.small{font-size:12px}
   .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}.kpi{background:var(--sur2);border-radius:12px;padding:12px 14px}.kpi .v{font-family:Manrope;font-weight:800;font-size:26px;line-height:1.1}.kpi .l{font-size:12px;color:var(--mut);margin-top:4px}
-  .placeholder{border:2px dashed var(--line);border-radius:12px;padding:22px;color:var(--mut);text-align:center;font-size:14px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}.kpi{background:var(--sur2);border-radius:8px;padding:12px 14px}.kpi .v{font-size:24px;line-height:1.1;color:var(--verde)}.kpi .l{font-size:12px;color:var(--mut);margin-top:4px}
+  .placeholder{border:1px dashed var(--line);border-radius:8px;padding:22px;color:var(--mut);text-align:center;font-size:13px}
   .legend{color:var(--mut);font-size:12px;margin-top:8px}.hidden{display:none!important}
-  .ojo{border:0;background:transparent;color:var(--acc);cursor:pointer;font-size:16px;padding:0 4px;vertical-align:middle;line-height:1}.ojo:hover{transform:scale(1.15)}
-  #modal{position:fixed;inset:0;background:rgba(6,10,20,.7);display:none;align-items:center;justify-content:center;z-index:45}
-  #modal2{position:fixed;inset:0;background:rgba(6,10,20,.6);display:none;align-items:center;justify-content:center;z-index:40}
-  #modal2 .mbox{background:var(--sur);border:1px solid var(--line);border-radius:16px;padding:22px 26px;max-width:1000px;width:94%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 30px 80px rgba(0,0,0,.5)}
-  #modal2 .mscroll{overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:10px;flex:1}#modal2 table th{position:sticky;top:0;background:var(--sur2)}
-  #modal .mbox{background:var(--sur);border:1px solid var(--line);border-radius:16px;padding:22px 26px;max-width:1100px;width:94%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 30px 80px rgba(0,0,0,.5)}
-  #modal .mscroll{overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:10px;flex:1}#modal table th{position:sticky;top:0;background:var(--sur2)}
-  .tipo{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600}.tipo.c{background:var(--ok-soft);color:var(--ok)}.tipo.x{background:var(--bad-soft);color:var(--bad)}.tipo.r{background:var(--warn-soft);color:var(--warn)}
   .cfg td.n{text-align:center}
-  .login{max-width:380px;margin:12vh auto}.login input{width:100%;margin:6px 0 12px}
-  #popup{position:fixed;inset:0;background:rgba(6,10,20,.7);display:none;align-items:center;justify-content:center;z-index:50}
-  #popup .box{background:var(--bad-soft);border:3px solid var(--bad);border-radius:18px;padding:28px 34px;max-width:640px;width:92%;box-shadow:0 30px 80px rgba(0,0,0,.6)}
-  #popup h2{font-size:26px;color:var(--bad);margin-bottom:12px}#popup .k{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut)}#popup .v{font-size:19px;font-weight:600;margin-bottom:10px}
-  @media (prefers-reduced-motion:no-preference){.siren{animation:blink .35s steps(2) 5}}@keyframes blink{50%{border-color:var(--warn)}}
+  .login{max-width:380px;margin:12vh auto}.login input{width:100%;margin:6px 0 12px}.login button{width:100%}
+  .ojo{border:0;background:transparent;color:var(--verde);cursor:pointer;padding:2px 4px;vertical-align:middle;line-height:0}.ojo svg{width:18px;height:18px;display:block}.ojo:hover{color:var(--dorado);background:transparent}
+  #popup{position:fixed;inset:0;background:rgba(31,42,35,.55);display:none;align-items:center;justify-content:center;z-index:50}
+  #popup .box{background:#fff;color:var(--tx);border-top:6px solid var(--bad);border-radius:8px;padding:26px 30px;max-width:640px;width:92%;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+  #popup h2{font-size:22px;color:var(--bad);margin-bottom:12px}#popup .k{font-size:11px;letter-spacing:.08em;color:var(--mut)}#popup .v{font-size:17px;margin-bottom:10px}
+  #modal,#modal2{position:fixed;inset:0;background:rgba(31,42,35,.5);display:none;align-items:center;justify-content:center}#modal{z-index:45}#modal2{z-index:40}
+  #modal .mbox,#modal2 .mbox{background:#fff;border:1px solid var(--line);border-top:4px solid var(--verde);border-radius:8px;padding:22px 26px;max-width:1100px;width:94%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.2)}
+  #modal2 .mbox{max-width:1000px}#modal .mscroll,#modal2 .mscroll{overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:6px;flex:1}#modal table th,#modal2 table th{position:sticky;top:0}
+  .tipo{display:inline-block;padding:1px 8px;border-radius:4px;font-size:12px}.tipo.c{background:var(--verde-tinte);color:var(--ok)}.tipo.x{background:#FBE9E7;color:var(--bad)}.tipo.r{background:var(--dorado-tinte);color:var(--warn)}
+  @media (prefers-reduced-motion:no-preference){.siren{animation:blink .35s steps(2) 5}}@keyframes blink{50%{border-top-color:var(--dorado)}}
 </style>
 </head>
 <body>
 <div class="top">
   <div class="bar">
-    <div><h1>¿Cómo va cada uno?</h1><div class="sub" id="sub"></div></div>
+    <div class="marca"><!-- isotipo Fénix: provisional en SVG; se reemplaza por el archivo del logo (solo el círculo) --><svg viewBox="0 0 100 100" role="img" aria-label="Fénix Ventures"><defs><linearGradient id="gAm" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFD84D"/><stop offset="1" stop-color="#F0A21A"/></linearGradient><linearGradient id="gVe" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2FA84F"/><stop offset="1" stop-color="#0B6B3A"/></linearGradient></defs><circle cx="50" cy="50" r="47" fill="url(#gAm)" stroke="#0E7A3E" stroke-width="5"/><rect x="30" y="56" width="11" height="24" rx="5.5" fill="url(#gVe)"/><rect x="45" y="46" width="11" height="34" rx="5.5" fill="url(#gVe)"/><rect x="60" y="34" width="11" height="46" rx="5.5" fill="url(#gVe)"/><path d="M34 30c9-6 20-6 30 1 6 4 7 2 10-2-2 7-6 10-12 10-9 0-17 3-25 6 5-5 11-7 17-8-8-2-14-4-20-7z" fill="url(#gVe)"/></svg><div><h1>¿Cómo va cada uno?</h1><div class="sub" id="sub"></div></div></div>
     <span class="who" id="who"></span>
-    <button class="sec small hidden" id="btnSonido" title="Los navegadores exigen un clic para permitir sonido">🔔 Activar sonido</button>
+    <button class="sec small hidden" id="btnSonido" title="Los navegadores exigen un clic para permitir sonido">Activar sonido</button>
     <button class="sec small hidden" id="btnSalir">Cerrar sesión</button>
   </div>
   <div class="tabs" id="tabs"></div>
 </div>
 <main id="main"></main>
 <div id="modal2"><div class="mbox">
-  <div class="row"><h2 id="m2tit" class="grow" style="font-size:20px">Detalle por tienda</h2><button class="sec" onclick="document.getElementById('modal2').style.display='none'">✕</button></div>
+  <div class="row"><h2 id="m2tit" class="grow" style="font-size:20px">Detalle por tienda</h2><button class="sec" onclick="document.getElementById('modal2').style.display='none'">Cerrar</button></div>
   <div class="mut small" id="m2sub" style="font-size:13px"></div>
   <div class="mscroll"><table><thead><tr><th>Tienda</th><th class="n">Gestiones</th><th class="n">Reprogramadas</th><th class="n">Confirmadas</th><th class="n">Canceladas</th><th class="n">Efectividad</th><th></th></tr></thead><tbody id="m2body"></tbody></table></div>
-  <div class="legend">Porcentajes sobre el total de gestiones de la tienda; Efectividad = confirmadas + canceladas sobre gestiones. 🟢 cumple la meta del cargo del agente · 🟡 entre 90 % y la meta · 🔴 por debajo · gris sin meta. El 👁 abre las órdenes de esa tienda con la misma temporalidad.</div>
+  <div class="legend">Porcentajes sobre el total de gestiones de la tienda; Efectividad = confirmadas + canceladas sobre gestiones. Verde: cumple la meta del cargo del agente · ámbar: entre 90 % y la meta · rojo: por debajo · gris: sin meta. El ojo abre las órdenes de esa tienda con la misma temporalidad.</div>
 </div></div>
 <div id="modal"><div class="mbox">
-  <div class="row"><h2 id="mtit" class="grow" style="font-size:20px">Detalle de gestión</h2><button class="sec" onclick="document.getElementById('modal').style.display='none'">✕</button></div>
+  <div class="row"><h2 id="mtit" class="grow" style="font-size:20px">Detalle de gestión</h2><button class="sec" onclick="document.getElementById('modal').style.display='none'">Cerrar</button></div>
   <div class="mut small" id="msub" style="font-size:13px"></div>
   <div class="mscroll"><table><thead><tr><th class="n">ID Dropi</th><th class="n">Celular</th><th>Tipo</th><th>Fecha / hora</th><th>Motivo</th><th>Tienda</th></tr></thead><tbody id="mbody"></tbody></table></div>
   <div class="row" style="margin-top:12px"><span class="grow legend" id="mnota"></span><button id="mexp">Exportar Excel</button></div>
 </div></div>
 <div id="popup"><div class="box" id="pbox">
-  <h2>⚠️ Error de auditoría registrado</h2>
+  <h2>Error de auditoría registrado</h2>
   <div class="k">Agente</div><div class="v" id="pAgente"></div>
   <div class="k">Orden · Tienda · Producto</div><div class="v" id="pTienda"></div>
   <div class="k">Qué sucedió</div><div class="v" id="pDesc"></div>
@@ -118,7 +126,7 @@ function clearTimers(){timers.forEach(clearInterval);timers=[]}
 async function api(action,body){var s=(await sb.auth.getSession()).data.session;if(!s)throw new Error("sesión vencida");var r=await fetch(FN,{method:"POST",headers:{"Content-Type":"application/json","apikey":ANON_KEY,"Authorization":"Bearer "+s.access_token},body:JSON.stringify(Object.assign({action:action},body||{}))});var t=await r.text();var j={};try{j=t?JSON.parse(t):{}}catch(e){j={error:t}}if(!r.ok){var e=new Error(j.error||("error "+r.status));e.status=r.status;e.data=j;throw e}return j}
 
 // ---------- alerta: sirena corta tipo ambulancia ----------
-$("btnSonido").onclick=function(){try{audioCtx=audioCtx||new(window.AudioContext||window.webkitAudioContext)();audioCtx.resume();sirena(0.25);$("btnSonido").textContent="🔔 Sonido activo";$("btnSonido").disabled=true}catch(e){}};
+$("btnSonido").onclick=function(){try{audioCtx=audioCtx||new(window.AudioContext||window.webkitAudioContext)();audioCtx.resume();sirena(0.25);$("btnSonido").textContent="Sonido activo";$("btnSonido").disabled=true}catch(e){}};
 function sirena(vol){if(!audioCtx)return;try{var t=audioCtx.currentTime,g=audioCtx.createGain(),osc=audioCtx.createOscillator();osc.type="square";for(var i=0;i<6;i++)osc.frequency.setValueAtTime(i%2?640:960,t+i*0.3);g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol||0.9,t+0.05);g.gain.setValueAtTime(vol||0.9,t+1.7);g.gain.exponentialRampToValueAtTime(0.0001,t+1.85);osc.connect(g).connect(audioCtx.destination);osc.start(t);osc.stop(t+1.9)}catch(e){}}
 function mostrarPopup(e){$("pAgente").textContent=e.agente||"—";$("pTienda").textContent=[e.orden?"#"+e.orden:null,e.tienda,e.producto].filter(Boolean).join(" · ")||"—";$("pDesc").textContent=e.descripcion||"";$("popup").style.display="flex";$("pbox").classList.add("siren");sirena(0.9)}
 $("pCerrar").onclick=function(){$("popup").style.display="none";$("pbox").classList.remove("siren")};
@@ -160,8 +168,8 @@ async function verTiendas(agent_id,nombre,desde,hasta,rot){
     var ag=(R&&R.agentes||[]).filter(function(x){return x.agent_id===agent_id})[0];var cargo=ag?(ag.cargo_hoy||ag.cargo_permanente):a.cargo_permanente;var m=((R&&R.metas)||{})[cargo]||{};var mEf=m.medible?m.efectividad:null,mCa=m.medible?m.cancelacion:null;
     var T=a.total;$("m2sub").textContent=(NOMBRE[cargo]||"")+" · "+T.gest+" gestiones en "+a.tiendas.length+" tienda(s) · "+(desde===hasta?desde:"del "+desde+" al "+hasta);
     var fila=function(r){return'<td class="n"><b>'+r.gest+'</b></td><td class="n">'+nP(r.reprog,r.gest,null)+'</td><td class="n">'+nP(r.conf,r.gest,null)+'</td><td class="n">'+nP(r.canc,r.gest,cCa(r,mCa))+'</td><td class="n">'+nP(r.conf+r.canc,r.gest,cEf(r,mEf))+'</td>'};
-    var hh="";a.tiendas.forEach(function(r){hh+='<tr><td>'+esc(r.tienda)+'</td>'+fila(r)+'<td><button class="ojo" data-t="'+esc(r.tienda)+'" title="Ver las órdenes de esta tienda">👁</button></td></tr>'});
-    hh+='<tr class="total"><td>Total del agente</td>'+fila(T)+'<td><button class="ojo" data-t="" title="Ver todas las órdenes">👁</button></td></tr>';
+    var hh="";a.tiendas.forEach(function(r){hh+='<tr><td>'+esc(r.tienda)+'</td>'+fila(r)+'<td><button class="ojo" data-t="'+esc(r.tienda)+'" title="Ver las órdenes de esta tienda"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></td></tr>'});
+    hh+='<tr class="total"><td>Total del agente</td>'+fila(T)+'<td><button class="ojo" data-t="" title="Ver todas las órdenes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></td></tr>';
     $("m2body").innerHTML=hh||'<tr><td colspan="7" class="mut">Sin gestiones en el rango.</td></tr>';
     Array.prototype.forEach.call($("m2body").querySelectorAll("button.ojo"),function(b){b.onclick=function(){verOrdenes(agent_id,nombre,desde,hasta,rot,b.getAttribute("data-t")||null)}})}
   catch(e){$("m2sub").textContent=e.message}}
@@ -185,7 +193,7 @@ function filaTabla(nombre,tag,b,metas,cargo,aud,esDia,general,ojo){
   h+='<td class="sep n">—</td><td class="n">&lt; 3</td><td>'+(esDia?'<span class="pill n">mensual</span>':'<span class="pill n">manual</span>')+'</td>';
   if(esDia){h+='<td class="sep n">—</td><td class="n">—</td><td><span class="pill n">mensual</span></td>'}
   else{var am=R.auditoria_meta_pct;h+='<td class="sep n">'+(aud&&aud.pct!=null?pct(aud.pct,1):"—")+'</td><td class="n">'+(am==null?"por definir":"≤ "+pct(am,0))+'</td><td>'+(aud?cumpleTxt(aud.cumpl):'<span class="pill n">—</span>')+'</td>'}
-  h+='<td class="sep gen">'+(general==null?'<span class="pill n">—</span>':pct(general,0))+(ojo?' <button class="ojo" title="Ver las órdenes gestionadas" data-ojo="'+esc(ojo)+'">👁</button>':'')+'</td>';return h}
+  h+='<td class="sep gen">'+(general==null?'<span class="pill n">—</span>':pct(general,0))+(ojo?' <button class="ojo" title="Ver las órdenes gestionadas" data-ojo="'+esc(ojo)+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>':'')+'</td>';return h}
 function tablaResumen(titulo,sub,esDia){
   var ags=(R.agentes||[]).map(function(a){var b=esDia?a.dia:bloqueMes(a);var cargo=esDia?(b?b.cargo:null):(b?b.cargo:a.cargo_hoy);return{a:a,b:b,cargo:cargo,general:b?b.general:null}}).sort(function(x,y){return(y.general==null?-1:y.general)-(x.general==null?-1:x.general)});
   var h='<div class="card big"><h2>'+titulo+' <small>'+sub+'</small></h2><div class="wrap"><table><thead><tr><th></th><th class="grp" colspan="3">Efectividad</th><th class="grp" colspan="3">Cancelación</th><th class="grp" colspan="3">Gestiones</th><th class="grp" colspan="3">Puntualidad</th><th class="grp" colspan="3">Auditoría</th><th class="grp">General</th></tr>';
@@ -193,7 +201,7 @@ function tablaResumen(titulo,sub,esDia){
   ags.forEach(function(f,i){var a=f.a;var tag=esc(NOMBRE[f.cargo]||"sin asignar")+(a.turno_hoy?" · "+turnoTxt(esDia&&f.b?f.b.turno:a.turno_hoy):"");h+='<tr class="click" data-id="'+esc(a.agent_id)+'">'+filaTabla('<span class="rank">'+(i+1)+'</span>'+esc(a.nombre),tag,f.b,R.metas||{},f.cargo,a.auditoria,esDia,f.general,a.agent_id+"|"+(esDia?"d":"m"))+'</tr>'});
   if(!esDia){var cons=R.consolidado||{};Object.keys(cons).sort().forEach(function(t){var c=cons[t];var L=c.lider||(R.lideres||{})[t];var rot=L?(L.etiqueta||"Líder")+" · "+L.nombre:"Turno "+turnoTxt(t);
     h+='<tr class="total"><td>'+esc(rot)+'<span class="cargo">'+turnoTxt(t)+' esta semana</span></td><td class="sep n">'+pct(c.efectividad_real)+'</td><td></td><td>'+pill(c.efectividad_cumpl)+'</td><td class="sep n">'+pct(c.cancelacion_real)+'</td><td></td><td>'+pill(c.cancelacion_cumpl)+'</td><td class="sep n">'+fmt(c.ritmo)+'</td><td class="n">'+fmt(R.compuerta_ritmo,0)+'</td><td>'+(c.ritmo==null?'<span class="pill n">—</span>':cumpleTxt(c.compuerta))+'</td><td class="sep"></td><td></td><td></td><td class="sep"></td><td></td><td></td><td class="sep gen">'+(c.general==null?"—":pct(c.general,0))+'</td></tr>'})}
-  h+='</tbody></table></div><div class="legend">Ordenados de mayor a menor cumplimiento general. 🟢 ≥100 % · 🟡 90 a &lt;100 % · 🔴 &lt;90 %. Las gestiones por hora son la compuerta: si el mes no llega a '+fmt(R.compuerta_ritmo,0)+', la Efectividad no cumple. Puntualidad y Auditoría se cumplen o no se cumplen.'+(esDia?' Las gestiones por hora de hoy son el cronómetro en vivo.':'')+' Clic en el agente: detalle por tienda con la temporalidad de esta tabla. 👁: órdenes.</div></div>';
+  h+='</tbody></table></div><div class="legend">Ordenados de mayor a menor cumplimiento general. Verde: ≥100 % · ámbar: 90 a &lt;100 % · rojo: &lt;90 %. Las gestiones por hora son la compuerta: si el mes no llega a '+fmt(R.compuerta_ritmo,0)+', la Efectividad no cumple. Puntualidad y Auditoría se cumplen o no se cumplen.'+(esDia?' Las gestiones por hora de hoy son el cronómetro en vivo.':'')+' Clic en el agente: detalle por tienda con la temporalidad de esta tabla. el ojo abre las órdenes.</div></div>';
   return h}
 async function vResumen(){var hoy=hoyISO();main.innerHTML='<div class="card"><div class="row"><label>Mes <input id="mes" type="month" value="'+mesSel+'"></label><label>Día (tabla de arriba) <input id="dia" type="date" value="'+(diaSel||hoy)+'" max="'+hoy+'"></label><span class="grow"></span><span class="mut small" id="meta"></span></div></div><div id="ban"></div><div id="t1"></div><div class="card"><div class="row"><b class="grow">Tabla de abajo · filtro de fechas</b><label>Desde <input type="date" id="rd" value="'+(rangoD||mesSel+"-01")+'" max="'+hoy+'"></label><label>Hasta <input type="date" id="rh" value="'+(rangoH||(mesSel===mesISO()?hoy:finMes(mesSel)))+'" max="'+hoy+'"></label><button class="sec" id="rmes">Mes actual</button><button id="rap">Aplicar</button></div><div class="legend">Por defecto muestra el acumulado del mes; cambia las fechas para analizar un rango o un día exacto. El detalle por tienda y las órdenes que abras desde esa tabla usan el mismo rango.</div></div><div id="t2"></div>';
   $("mes").onchange=function(){mesSel=$("mes").value;diaSel=null;rangoD=null;rangoH=null;vResumen()};$("dia").onchange=function(){diaSel=$("dia").value;mesSel=diaSel.slice(0,7);$("mes").value=mesSel;pintarResumen()};
@@ -202,7 +210,7 @@ async function vResumen(){var hoy=hoyISO();main.innerHTML='<div class="card"><di
   await pintarResumen();if(resTimer)clearInterval(resTimer);resTimer=setInterval(function(){if(tab==="resumen")pintarResumen()},60000)}
 async function pintarResumen(){try{await cargarResumen()}catch(e){$("t1").innerHTML='<div class="card"><span class="err">'+esc(e.message)+'</span></div>';return}
   $("meta").textContent="Acumulado hasta "+(R.hasta||"")+" · actualizado "+new Date().toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"});
-  var ban="";if(R.mes===mesISO()&&R.asignaciones_hoy===0){var hh=new Date(Date.now()-5*3600000).getUTCHours();if(hh>=7)ban+='<div class="banner warn">📋 Hoy todavía no hay asignación del día. Sin asignación, el día no se mide.</div>'}
+  var ban="";if(R.mes===mesISO()&&R.asignaciones_hoy===0){var hh=new Date(Date.now()-5*3600000).getUTCHours();if(hh>=7)ban+='<div class="banner warn">Hoy todavía no hay asignación del día. Sin asignación, el día no se mide.</div>'}
   if(R.sin_asignar&&R.sin_asignar.length)ban+='<div class="banner info">Hay '+R.sin_asignar.length+' día(s) con gestiones sin asignación o marcados como ausencia. Revísalos en Asignación del agente.</div>';
   $("ban").innerHTML=ban;var d=R.dia||hoyISO();
   $("t1").innerHTML=tablaResumen(d===R.hoy?"Hoy":"Día "+d,d===R.hoy?d+" · en vivo, se actualiza cada minuto":"cifras cerradas del día",true);
@@ -277,11 +285,11 @@ async function vPago(){var mes=mesSel;main.innerHTML='<div class="card"><div cla
     var ags=(D.agentes||[]).slice().sort(function(a,b){return(b.pago_estimado||0)-(a.pago_estimado||0)});
     var h='<div class="card"><h2>Agentes <small>acumulado del mes · ordenados por monto estimado</small></h2><div class="wrap"><table><thead><tr><th>Agente</th><th>Cargo</th><th class="n">Días / hábiles</th><th class="n">Efectividad</th><th class="n">Reconoce</th><th class="n">Cancelación</th><th class="n">Reconoce</th><th class="n">Puntualidad</th><th class="n">Reconocimiento</th><th class="n">Subtotal</th><th class="n">Multiplicador</th><th class="n">Pago estimado</th><th>Pendientes</th></tr></thead><tbody>';
     ags.forEach(function(a){var cs=a.cargos||[];if(!cs.length){h+='<tr><td>'+esc(a.nombre)+'</td><td colspan="10" class="mut">sin días en cargo medible'+(a.novedades_dias?' · Novedades: '+a.novedades_dias+' día(s), se liquida por fuera':'')+'</td><td class="n gen">'+cop(0)+'</td><td style="white-space:normal" class="small mut">'+esc((a.pendientes||[]).join(" · "))+'</td></tr>';return}
-      cs.forEach(function(c,i){h+='<tr>'+(i===0?'<td rowspan="'+cs.length+'">'+esc(a.nombre)+'</td>':'')+'<td>'+esc(c.nombre)+'</td><td class="n">'+c.dias+' / '+c.dias_habiles+'</td><td class="n">'+pct(c.efectividad_cumpl,0)+(c.compuerta===false?' ⛔':'')+'</td><td class="n">'+fx(c.factor_efectividad)+'</td><td class="n">'+pct(c.cancelacion_cumpl,0)+'</td><td class="n">'+fx(c.factor_cancelacion)+'</td><td class="n">'+(c.dias_tarde==null?"pendiente":c.dias_tarde+" tarde → "+fx(c.factor_puntualidad))+'</td><td class="n">'+pct(c.reconocimiento,1)+'</td><td class="n">'+cop(c.subtotal)+'</td>'+(i===0?'<td class="n" rowspan="'+cs.length+'">'+esc(a.multiplicador_txt)+'</td><td class="n gen" rowspan="'+cs.length+'">'+cop(a.pago_estimado)+'</td><td rowspan="'+cs.length+'" style="white-space:normal" class="small mut">'+esc((a.pendientes||[]).join(" · "))+'</td>':'')+'</tr>'})});
-    h+='</tbody></table></div><div class="legend">Reconoce = lo que la escalera reconoce del cumplimiento. Subtotal = valor del cargo × (días en el cargo ÷ días hábiles del mes) × reconocimiento ponderado. Pago estimado = suma de subtotales × multiplicador de auditoría. ⛔ = gestiones por hora del mes por debajo de la compuerta: la Efectividad no reconoce.</div></div>';
+      cs.forEach(function(c,i){h+='<tr>'+(i===0?'<td rowspan="'+cs.length+'">'+esc(a.nombre)+'</td>':'')+'<td>'+esc(c.nombre)+'</td><td class="n">'+c.dias+' / '+c.dias_habiles+'</td><td class="n">'+pct(c.efectividad_cumpl,0)+(c.compuerta===false?' (sin compuerta)':'')+'</td><td class="n">'+fx(c.factor_efectividad)+'</td><td class="n">'+pct(c.cancelacion_cumpl,0)+'</td><td class="n">'+fx(c.factor_cancelacion)+'</td><td class="n">'+(c.dias_tarde==null?"pendiente":c.dias_tarde+" tarde → "+fx(c.factor_puntualidad))+'</td><td class="n">'+pct(c.reconocimiento,1)+'</td><td class="n">'+cop(c.subtotal)+'</td>'+(i===0?'<td class="n" rowspan="'+cs.length+'">'+esc(a.multiplicador_txt)+'</td><td class="n gen" rowspan="'+cs.length+'">'+cop(a.pago_estimado)+'</td><td rowspan="'+cs.length+'" style="white-space:normal" class="small mut">'+esc((a.pendientes||[]).join(" · "))+'</td>':'')+'</tr>'})});
+    h+='</tbody></table></div><div class="legend">Reconoce = lo que la escalera reconoce del cumplimiento. Subtotal = valor del cargo × (días en el cargo ÷ días hábiles del mes) × reconocimiento ponderado. Pago estimado = suma de subtotales × multiplicador de auditoría. (sin compuerta) = gestiones por hora del mes por debajo de la compuerta: la Efectividad no reconoce.</div></div>';
     $("pag").innerHTML=h;
     var l='<div class="card"><h2>Líderes <small>consolidado de los agentes que firmó cada uno</small></h2><div class="wrap"><table><thead><tr><th>Líder</th><th class="n">Días liderados / debía</th><th class="n">Gest./hora</th><th class="n">Efectividad</th><th class="n">Reconoce</th><th class="n">Cancelación</th><th class="n">Reconoce</th><th class="n">Reconocimiento</th><th class="n">Subtotal</th><th class="n">Multiplicador</th><th class="n">Pago estimado</th><th>Pendientes</th></tr></thead><tbody>';
-    (D.lideres||[]).forEach(function(x){l+='<tr><td>'+esc((x.etiqueta?x.etiqueta+" · ":"")+x.nombre)+'</td><td class="n">'+x.dias_liderados+' / '+x.dias_debia+'</td><td class="n">'+fmt(x.ritmo)+(x.compuerta===false?' ⛔':'')+'</td><td class="n">'+pct(x.efectividad_cumpl,0)+'</td><td class="n">'+fx(x.factor_efectividad)+'</td><td class="n">'+pct(x.cancelacion_cumpl,0)+'</td><td class="n">'+fx(x.factor_cancelacion)+'</td><td class="n">'+pct(x.reconocimiento,1)+'</td><td class="n">'+cop(x.pago_variables)+'</td><td class="n">'+esc(x.multiplicador_txt)+'</td><td class="n gen">'+cop(x.pago_estimado)+'</td><td style="white-space:normal" class="small mut">'+esc((x.pendientes||[]).join(" · "))+'</td></tr>'});
+    (D.lideres||[]).forEach(function(x){l+='<tr><td>'+esc((x.etiqueta?x.etiqueta+" · ":"")+x.nombre)+'</td><td class="n">'+x.dias_liderados+' / '+x.dias_debia+'</td><td class="n">'+fmt(x.ritmo)+(x.compuerta===false?' (sin compuerta)':'')+'</td><td class="n">'+pct(x.efectividad_cumpl,0)+'</td><td class="n">'+fx(x.factor_efectividad)+'</td><td class="n">'+pct(x.cancelacion_cumpl,0)+'</td><td class="n">'+fx(x.factor_cancelacion)+'</td><td class="n">'+pct(x.reconocimiento,1)+'</td><td class="n">'+cop(x.pago_variables)+'</td><td class="n">'+esc(x.multiplicador_txt)+'</td><td class="n gen">'+cop(x.pago_estimado)+'</td><td style="white-space:normal" class="small mut">'+esc((x.pendientes||[]).join(" · "))+'</td></tr>'});
     $("pli").innerHTML=l+'</tbody></table></div><div class="legend">Valor del cargo de líder × (días liderados ÷ días que debía liderar) × reconocimiento del bloque Operación (Efectividad 50 · Cancelación 35, sin Puntualidad). El bloque Novedades queda vacío hasta que exista su fuente.</div></div>'}
   $("pm").onchange=cargar;await cargar()}
 
