@@ -80,10 +80,11 @@ async function storageFirmar(ruta: string, segundos = 3600): Promise<string> {
   const j = await r.json();
   return `${SURL}/storage/v1${j.signedURL}`;
 }
-const AUD_SELECT = "id,momento,orden,tienda,pais,celular,fecha_auditoria,fecha_gestion,descripcion,registrado_por,agent_id,agente:var_agente(nombre),tipo:var_error_tipo(id,nombre,color),adjuntos:var_auditoria_adjunto(id,ruta,nombre,mime,bytes,creado_en)";
+const AUD_SELECT = "id,momento,orden,tienda,pais,celular,fecha_auditoria,fecha_gestion,descripcion,registrado_por,agent_id,agente:var_agente(nombre),tipo:var_error_tipo(id,nombre,color),tipos:var_auditoria_tipo(tipo:var_error_tipo(id,nombre,color)),adjuntos:var_auditoria_adjunto(id,ruta,nombre,mime,bytes,creado_en)";
 function filaAud(e: any, nombres: Record<string, string>, conRuta = false) {
   return { id: e.id, momento: e.momento, orden: e.orden, tienda: e.tienda, pais: e.pais, celular: e.celular, fecha_auditoria: e.fecha_auditoria, fecha_gestion: e.fecha_gestion, descripcion: e.descripcion,
     agent_id: e.agent_id, agente: e.agente?.nombre || "", tipo: e.tipo ? { id: e.tipo.id, nombre: e.tipo.nombre, color: e.tipo.color } : null, registrado_por: nombres[e.registrado_por] || "",
+    tipos: ((e.tipos || []).map((x: any) => x.tipo).filter(Boolean).length ? (e.tipos || []).map((x: any) => x.tipo).filter(Boolean) : (e.tipo ? [e.tipo] : [])).map((x: any) => ({ id: x.id, nombre: x.nombre, color: x.color })),
     adjuntos: (e.adjuntos || []).map((a: any) => ({ id: a.id, nombre: a.nombre, mime: a.mime, bytes: a.bytes, creado_en: a.creado_en, ...(conRuta ? { ruta: a.ruta } : {}) })) };
 }
 async function nombresUsuarios(): Promise<Record<string, string>> {
@@ -213,8 +214,8 @@ Deno.serve(async (req: Request) => {
 
       case "errores": {   // pop-up: errores de auditoría nuevos desde un id
         const desde = Number.isSafeInteger(Number(body.desde)) && Number(body.desde) >= 0 ? Number(body.desde) : 0;
-        const rows = await getRows(`var_auditoria?id=gt.${desde}&anulado_por=is.null&select=id,momento,orden,tienda,pais,descripcion,agente:var_agente(nombre),tipo:var_error_tipo(nombre,color)&order=id.asc&limit=50`);
-        return json({ ok: true, errores: rows.map((e: any) => ({ id: e.id, momento: e.momento, orden: e.orden, tienda: e.tienda, pais: e.pais, descripcion: e.descripcion, agente: e.agente?.nombre || "", tipo: e.tipo?.nombre || "", color: e.tipo?.color || "" })) });
+        const rows = await getRows(`var_auditoria?id=gt.${desde}&anulado_por=is.null&select=id,momento,orden,tienda,pais,descripcion,agente:var_agente(nombre),tipo:var_error_tipo(nombre,color),tipos:var_auditoria_tipo(tipo:var_error_tipo(nombre,color))&order=id.asc&limit=50`);
+        return json({ ok: true, errores: rows.map((e: any) => { const ts = (e.tipos || []).map((x: any) => x.tipo).filter(Boolean); return { id: e.id, momento: e.momento, orden: e.orden, tienda: e.tienda, pais: e.pais, descripcion: e.descripcion, agente: e.agente?.nombre || "", tipo: ts.length ? ts.map((x: any) => x.nombre).join(" · ") : (e.tipo?.nombre || ""), color: e.tipo?.color || "", tipos: ts.map((x: any) => ({ nombre: x.nombre, color: x.color })) }; }) });
       }
 
       case "ordenes": {         // el "ojo": órdenes gestionadas por un agente en un rango (todos los roles)
@@ -308,10 +309,12 @@ Deno.serve(async (req: Request) => {
         const hoyCol = await rpc("var_hoy_col", {});
         if (fa > hoyCol) return json({ error: "el día de auditoría no puede ser futuro" }, 400);
         if (fg > fa) return json({ error: "el día de gestión no puede ser posterior al de auditoría" }, 400);
-        const tipo_id = Number(body.tipo_id);
-        if (!Number.isInteger(tipo_id) || tipo_id <= 0) return json({ error: "elige el tipo de error" }, 400);
-        const tipo = await getRows(`var_error_tipo?id=eq.${tipo_id}&activo=is.true&select=id`);
-        if (!tipo.length) return json({ error: "tipo de error inválido" }, 400);
+        // Tipos de error: uno o varios por orden (input 18, ronda 3). El primero queda como tipo principal.
+        const tipoIds: number[] = Array.from(new Set((Array.isArray(body.tipo_ids) ? body.tipo_ids : [body.tipo_id]).map((x: any) => Number(x)).filter((x: number) => Number.isInteger(x) && x > 0))).slice(0, 10) as number[];
+        if (!tipoIds.length) return json({ error: "elige al menos un tipo de error" }, 400);
+        const tiposOk = await getRows(`var_error_tipo?id=in.(${tipoIds.join(",")})&activo=is.true&select=id`);
+        if (tiposOk.length !== tipoIds.length) return json({ error: "tipo de error inválido" }, 400);
+        const tipo_id = tipoIds[0];
         // Celular: manda el que ya está en el sistema; si la orden no está, el auditor debe escribirlo.
         const contacto = await rpc("var_orden_contacto", { p_orden: orden });
         let celular: string | null = contacto?.celular || null;
@@ -320,11 +323,13 @@ Deno.serve(async (req: Request) => {
           if (body.celular_manual !== true || c.length < 7 || c.length > 15) return json({ error: "la orden no está en el sistema: escribe el celular del cliente (7 a 15 dígitos)", pedir_celular: true }, 400);
           celular = c;
         }
-        const dup = await getRows(`var_auditoria?agent_id=eq.${encodeURIComponent(agent_id)}&orden=eq.${encodeURIComponent(orden)}&tipo_id=eq.${tipo_id}&anulado_por=is.null&select=id,fecha_auditoria`);
-        if (dup.length) return json({ error: `esa orden ya tiene registrado este tipo de error para el mismo agente (registro ${dup[0].id}, auditado el ${dup[0].fecha_auditoria}); si fue un error, anúlalo en la tabla de hoy` }, 409);
+        const dup = await getRows(`var_auditoria?agent_id=eq.${encodeURIComponent(agent_id)}&orden=eq.${encodeURIComponent(orden)}&anulado_por=is.null&select=id,fecha_auditoria`);
+        if (dup.length) return json({ error: `esa orden ya está registrada con error para el mismo agente (registro ${dup[0].id}, auditado el ${dup[0].fecha_auditoria}); si falta un tipo o una evidencia, anúlalo y regístralo de nuevo` }, 409);
         const row = await insert("var_auditoria", { agent_id, orden: orden.slice(0, 60), tienda: body.tienda ? String(body.tienda).slice(0, 200) : (contacto?.tienda || null), pais: body.pais ? String(body.pais).slice(0, 60) : (contacto?.pais || null),
           celular, fecha_auditoria: fa, fecha_gestion: fg, tipo_id, descripcion: descripcion.slice(0, 2000), registrado_por: uid });
-        return json({ ok: true, id: row?.[0]?.id, celular });
+        const nuevoId = row?.[0]?.id;
+        if (nuevoId) await insert("var_auditoria_tipo", tipoIds.map((id) => ({ auditoria_id: nuevoId, tipo_id: id })), true);
+        return json({ ok: true, id: nuevoId, celular, tipo_ids: tipoIds });
       }
       case "adjunto_subir": {   // evidencia (base64) → bucket privado + fila inmutable
         if (!permitido("auditoria", "admin")) return negar();
