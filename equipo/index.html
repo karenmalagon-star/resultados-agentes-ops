@@ -26,23 +26,28 @@
   .tabs button{border:0;background:transparent;color:var(--mut);padding:10px 12px;font:inherit;font-size:14px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap}
   .tabs button.on{color:var(--verde);border-bottom-color:var(--dorado-2)}
   button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--dorado);outline-offset:2px}
-  main{max-width:1500px;margin:0 auto;padding:22px 28px 60px;display:grid;gap:22px}
+  main{max-width:1600px;margin:0 auto;padding:22px 24px 60px;display:grid;gap:22px}
+  main>*{min-width:0}
+  .card{min-width:0}
   .card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:18px 20px}
   .card h2{font-size:16px;color:var(--verde);display:flex;align-items:center;gap:10px;flex-wrap:wrap}.card h2 small{color:var(--mut);font-size:12px}
   .card h3{font-size:15px;color:var(--verde)}
-  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.grow{flex:1}
+  .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;min-width:0}.grow{flex:1 1 auto;min-width:0}
   .note{background:var(--verde-tinte);border-left:3px solid var(--verde);border-radius:0 6px 6px 0;padding:10px 14px;font-size:13px}.note b{color:var(--verde)}
   .banner{padding:10px 14px;border-radius:6px;font-size:13px;border:1px solid var(--line)}.banner.warn{background:var(--dorado-tinte);border-color:#E7CF8E;color:#6B4E0B}.banner.info{background:var(--verde-tinte);border-color:var(--verde-linea);color:var(--verde-osc)}
   .wrap{overflow-x:auto}
-  table{width:100%;border-collapse:collapse;font-size:13.5px}
-  th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}
-  th{color:var(--verde);font-size:11px;letter-spacing:.05em;vertical-align:bottom;background:var(--verde-tinte)}
+  table{width:100%;border-collapse:collapse;font-size:13px;table-layout:auto}
+  th,td{padding:7px 6px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}
+  th{color:var(--verde);font-size:10.5px;letter-spacing:.03em;vertical-align:bottom;background:var(--verde-tinte);white-space:normal;line-height:1.2}
+  td:first-child{white-space:normal;text-align:center}
+  @media (max-width:1500px){table{font-size:12px}th,td{padding:6px 4px}.big table{font-size:12.5px}.big td,.big th{padding:7px 5px}.cargo{display:block;margin:2px auto 0;width:max-content}}
+  @media (max-width:1200px){table{font-size:11.5px}th,td{padding:5px 3px}.pill{min-width:0}.pill::before{margin-right:4px}}
   th.grp{border-bottom:1px solid var(--verde-linea);font-size:11.5px}th.grp+th.grp{border-left:1px solid var(--verde-linea)}
   td.sep,th.sep{border-left:1px solid var(--line)}
   tr.total td{background:var(--sur2);border-top:2px solid var(--verde-linea)}
   tr.click{cursor:pointer}tr.click:hover td{background:var(--verde-tinte)}
-  .big table{font-size:14.5px}.big td,.big th{padding:10px 12px}
-  .cargo{display:inline-block;font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:4px;padding:1px 7px;margin-left:6px;vertical-align:middle}
+  .big table{font-size:13.5px}.big td,.big th{padding:8px 8px}
+  .cargo{display:block;font-size:10.5px;color:var(--mut);border:1px solid var(--line);border-radius:4px;padding:0 6px;margin:2px auto 0;width:max-content}
   .pill{display:inline-block;min-width:54px;text-align:center;font-size:13px;white-space:nowrap}
   .pill::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle;background:#B8C2BB}
   .pill.g{color:var(--ok)}.pill.g::before{background:var(--ok)}.pill.y{color:var(--warn)}.pill.y::before{background:var(--warn)}.pill.r{color:var(--bad)}.pill.r::before{background:var(--bad)}.pill.n{color:var(--mut)}
@@ -74,7 +79,7 @@
 <body>
 <div class="top">
   <div class="bar">
-    <div class="marca"><!-- isotipo Fénix: provisional en SVG; se reemplaza por el archivo del logo (solo el círculo) --><svg viewBox="0 0 100 100" role="img" aria-label="Fénix Ventures"><defs><linearGradient id="gAm" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFD84D"/><stop offset="1" stop-color="#F0A21A"/></linearGradient><linearGradient id="gVe" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2FA84F"/><stop offset="1" stop-color="#0B6B3A"/></linearGradient></defs><circle cx="50" cy="50" r="47" fill="url(#gAm)" stroke="#0E7A3E" stroke-width="5"/><rect x="30" y="56" width="11" height="24" rx="5.5" fill="url(#gVe)"/><rect x="45" y="46" width="11" height="34" rx="5.5" fill="url(#gVe)"/><rect x="60" y="34" width="11" height="46" rx="5.5" fill="url(#gVe)"/><path d="M34 30c9-6 20-6 30 1 6 4 7 2 10-2-2 7-6 10-12 10-9 0-17 3-25 6 5-5 11-7 17-8-8-2-14-4-20-7z" fill="url(#gVe)"/></svg><div><h1>¿Cómo va cada uno?</h1><div class="sub" id="sub"></div></div></div>
+    <div class="marca"><img src="img/logo-fenix.png" alt="Fénix Ventures" width="46" height="46"><div><h1>¿Cómo va cada uno?</h1><div class="sub" id="sub"></div></div></div>
     <span class="who" id="who"></span>
     <button class="sec small hidden" id="btnSonido" title="Los navegadores exigen un clic para permitir sonido">Activar sonido</button>
     <button class="sec small hidden" id="btnSalir">Cerrar sesión</button>
