@@ -15,7 +15,11 @@ Reglamento: `~/Documents/fenix-dashboard-ops/ESPECIFICACION_VARIABLES_v1.md` (v1
 | `009_resumen_rango.sql` | `var_resumen_mes(p_mes, p_dia, p_desde, p_hasta)`: filtro de fechas de la tabla mensual; `var_tiendas_agentes` de un solo agente (pop-up) | 2026-09-07 |
 | `010_ordenes_cronologico.sql` | el detalle de órdenes sale en orden cronológico (fecha, hora ascendentes) | 2026-09-07 |
 | `011_dia_independiente.sql` | corrección de auditoría: la tabla del día no depende del rango filtrado de la tabla mensual; asignaciones_hoy siempre de hoy | 2026-09-07 |
-| `tests/sprint2_escalera.sql` | pruebas de la escalera y el prorrateo (en verde) | — |
+| `012_consolidado_dia.sql` | fila del líder (consolidado de su turno) también en la tabla de Hoy / Día: `var_horas_vivas` y clave `consolidado_dia` en `var_resumen_mes` | 2026-09-08 |
+| `013_auditoria_v2.sql` | errores de auditoría v2 (input 18): catálogo `var_error_tipo` con semáforo, `var_auditoria` con fecha_auditoria/fecha_gestion/pais/celular/tipo_id, evidencias inmutables `var_auditoria_adjunto` + bucket privado `auditoria-evidencias`, `var_tiendas_pais`, `var_orden_contacto`, personas del equipo (`var_roster`, `var_personas_historico`, `var_persona_agregar`, `var_persona_salida`), cargo `agente_whatsapp`; la auditoría del mes se cuenta por fecha_auditoria | 2026-09-08 |
+| `014_auditoria_v2_revision.sql` | correcciones de la revisión adversarial de 013: roster por intervalo ingreso/salida (`var_roster(p_fecha, p_incluir_salidos)`), salida valida ≥ ingreso, reactivación solo admin cambia cargo, histórico sin pseudo-agentes, índice único (agente, orden, tipo) mientras no esté anulada, `var_auditoria_anular`, mime permitidos en el bucket, resumen excluye a quien salió antes del mes | 2026-09-08 |
+| `015_tipos_multiples.sql` | varios tipos de error por orden (`var_auditoria_tipo`); una orden con varios errores es un solo registro (cuenta 1); unicidad (agente, orden) mientras no esté anulada | 2026-09-08 |
+| `tests/sprint2_escalera.sql` y `tests/sprint2_consolidado_dia.sql` | pruebas de la escalera y el prorrateo (en verde) | — |
 | `tests/sprint1_puras.sql` | 23 pruebas de funciones puras (todas en verde el 2026-09-05) | — |
 | `../functions/variables/index.ts` | Edge Function: valida el JWT contra Auth, rol desde `var_usuarios`, acciones×rol, proyección por lista blanca | v1, `verify_jwt=false` (validación propia) |
 | `../../equipo/index.html` | página única con vistas por rol (`/equipo/`) | se publica al mergear a `main` (GitHub Pages) |
@@ -27,3 +31,4 @@ Reglamento: `~/Documents/fenix-dashboard-ops/ESPECIFICACION_VARIABLES_v1.md` (v1
 El primer admin se crea con una fila directa en `var_usuarios` (SQL), una sola vez.
 
 **Identidad visual (8-sep-2026, aprobada por Daniel):** un solo tema claro; verde #0B6B3A y dorado #F5C21B/#E9A11D del logo; fuente Museo 700 (`equipo/fonts/Museo700.otf`); ningún texto en mayúsculas sostenidas (inicial mayúscula y el resto minúscula); logo = solo el círculo del isotipo, sin letras (provisional en SVG hasta recibir el archivo).
+Pruebas 013: `tests/sprint3_auditoria_v2.sql` (13 OK el 8-sep-2026).
