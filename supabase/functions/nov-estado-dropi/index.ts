@@ -1,7 +1,7 @@
 // ============================================================================
 // nov-estado-dropi — estado de las órdenes en Dropi vía Broker Fenix (D-026) + gestiones de la IA. Cron cada 5 min de 05:00 a 08:55 Colombia.
 //  · El Broker procesa el job SOLO cuando se le hace GET (Cloud Run sin CPU en reposo): cada llamada nuestra sondea en secuencia
-//    hasta ~100 s y guarda el avance en nov_estado_jobs; la siguiente llamada del cron continúa. Nada se solapa.
+//    (una consulta de hasta ~90 s por invocación) y guarda el avance en nov_estado_jobs; la siguiente llamada del cron continúa. Nada se solapa.
 //  · Candidatas (nov_candidatas_estado): gestión aceptada en los últimos 180 días sin estado final; diario los primeros 14 días, semanal después;
 //    tandas de 1.000 (tope de PostgREST) cada vez que no hay jobs pendientes, sin repetir órdenes ya consultadas hoy.
 //  · Historial de estados de Dropi (con fechas reales) → nov_orden_estado_hist; último estado → nov_orden_estado.
@@ -17,7 +17,8 @@ const DBH = { apikey: SR, Authorization: `Bearer ${SR}`, "Content-Type": "applic
 const BH = { "X-API-Key": BKEY, "Content-Type": "application/json" } as Record<string, string>;
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { "content-type": "application/json" } });
 const FINAL = new Set(["ENTREGADO", "DEVOLUCION", "DESTRUCCION - SALVAMENTO - DONACION", "INDEMNIZADA", "INDEMNIZADA POR DROPI", "SINIESTRO"]);
-const PRESUPUESTO_MS = 100_000;   // por invocación
+const PRESUPUESTO_MS = 100_000;   // por invocación (tope de la plataforma ~150 s)
+const INICIO_GET_MS = 20_000;     // un GET al Broker tarda hasta ~90 s: solo se inicia uno si vamos por debajo de 20 s → una consulta por invocación
 const LOTE = 200;
 
 async function cfg(key: string): Promise<string> {
@@ -62,9 +63,9 @@ Deno.serve(async (req: Request) => {
   const logId = logRow?.[0]?.id;
   try {
     // A) jobs pendientes → sondear en secuencia dentro del presupuesto
-    let pend = await local(`nov_estado_jobs?status=eq.pending&order=creado_en.asc&select=job_id,country,n`);
+    let pend = await local(`nov_estado_jobs?status=eq.pending&order=n.asc,creado_en.asc&select=job_id,country,n`);   // lotes pequeños primero
     let sondeos = 0, guardadas = 0;
-    while (pend.length && Date.now() - t0 < PRESUPUESTO_MS) {
+    while (pend.length && Date.now() - t0 < INICIO_GET_MS) {
       const j = pend[0];
       const r = await fetch(`${BROKER}/v1/orders/status/${j.job_id}`, { headers: BH });
       const body = await r.json().catch(() => ({}));
