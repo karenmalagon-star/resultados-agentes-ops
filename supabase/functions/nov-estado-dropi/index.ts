@@ -2,9 +2,10 @@
 // nov-estado-dropi — estado de las órdenes en Dropi vía Broker Fenix (D-026) + gestiones de la IA. Cron cada 5 min de 05:00 a 08:55 Colombia.
 //  · El Broker procesa el job SOLO cuando se le hace GET (Cloud Run sin CPU en reposo): cada llamada nuestra sondea en secuencia
 //    hasta ~100 s y guarda el avance en nov_estado_jobs; la siguiente llamada del cron continúa. Nada se solapa.
-//  · Candidatas: órdenes con gestión aceptada por Dropi en los últimos 10 días que aún no estén en estado final (o nunca consultadas).
+//  · Candidatas (nov_candidatas_estado): gestión aceptada en los últimos 180 días sin estado final; diario los primeros 14 días, semanal después;
+//    tandas de 1.000 (tope de PostgREST) cada vez que no hay jobs pendientes, sin repetir órdenes ya consultadas hoy.
 //  · Historial de estados de Dropi (con fechas reales) → nov_orden_estado_hist; último estado → nov_orden_estado.
-//  · Primera llamada del día sin jobs pendientes: también trae las gestiones de la IA (ayer y hoy) → nov_ia_gestiones.
+//  · Una vez al día trae las gestiones de la IA (ayer y hoy) → nov_ia_gestiones.
 // ============================================================================
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
@@ -80,13 +81,9 @@ Deno.serve(async (req: Request) => {
     det.sondeos = sondeos; det.guardadas = guardadas; det.pendientes = pend.length;
     if (pend.length) { if (logId) await patch("nov_sync_log", `id=eq.${logId}`, { fin: new Date().toISOString(), ok: true, detalle: det }); return json({ ok: true, fase: "sondeo", ...det }); }
 
-    // B) sin jobs pendientes: ¿ya se encolaron hoy? (una tanda por día, Colombia)
+    // B) sin jobs pendientes: siguiente tanda de candidatas (la función SQL ya excluye lo consultado hoy)
     const hoyCol = new Date(Date.now() - 5 * 3600000).toISOString().slice(0, 10);
-    const yaHoy = await local(`nov_estado_jobs?creado_en=gte.${hoyCol}T05:00:00Z&select=job_id&limit=1`);
-    if (yaHoy.length && new URL(req.url).searchParams.get("force") !== "1") { if (logId) await patch("nov_sync_log", `id=eq.${logId}`, { fin: new Date().toISOString(), ok: true, detalle: { ...det, nota: "tanda de hoy ya hecha" } }); return json({ ok: true, fase: "nada que hacer", ...det }); }
-
-    // C) candidatas: gestión aceptada en los últimos 10 días y sin estado final (SQL en la base)
-    const cand: any[] = await rpc("nov_candidatas_estado", { p_dias: 10, p_max: 3500 });
+    const cand: any[] = await rpc("nov_candidatas_estado", { p_dias: 14, p_max: 1000, p_dias_max: 180 });
     const porPais: Record<string, any[]> = {};
     for (const c of cand) (porPais[c.country] ||= []).push({ order_id: String(c.order_id), store: c.store_name, country: c.country });
     let encolados = 0; const jobs: any[] = [];
@@ -102,10 +99,11 @@ Deno.serve(async (req: Request) => {
     if (jobs.length) await upsert("nov_estado_jobs", jobs, "job_id");
     det.candidatas = cand.length; det.encolados = encolados; det.jobs = jobs.length;
 
-    // D) gestiones de la IA (ayer y hoy), solo columnas sin datos del cliente
+    // D) gestiones de la IA (ayer y hoy), una vez al día, solo columnas sin datos del cliente
     const desde = new Date(Date.now() - 5 * 3600000 - 2 * 86400000).toISOString().slice(0, 10);
+    const iaHoy = await local(`nov_ia_gestiones?sincronizado_en=gte.${hoyCol}T05:00:00Z&select=order_id&limit=1`);
     let off = 0, ia = 0;
-    while (true) {
+    while (!iaHoy.length || new URL(req.url).searchParams.get("force") === "1") {
       const r = await fetch(`${BROKER}/v1/ia/gestiones?desde=${desde}&hasta=${hoyCol}&limit=1000&offset=${off}`, { headers: BH });
       if (!r.ok) { det.ia_error = `${r.status}`; break; }
       const b = await r.json(); const g = b.gestiones || [];
