@@ -163,8 +163,21 @@ function proyectarMatriz(r: any): any {
   };
 }
 
+// Novedades (D-024/D-027): bloque aparte de var_novedades_mes; lista blanca sin dinero
+function proyectarNovedades(n: any): any {
+  const d = (x: any) => x ? ({ fecha: x.fecha, turno: x.turno, intentos: x.intentos, ordenes: x.ordenes, ordenes_sol: x.ordenes_sol, intentos_validos: x.intentos_validos, ordenes_acidas: x.ordenes_acidas,
+    pendientes: x.pendientes, horas: x.horas, solucion_real: x.solucion_real, acida_real: x.acida_real, gest_h: x.gest_h }) : null;
+  const m = (x: any) => x ? ({ ...d(x), dias: x.dias, intentos_cerrados: x.intentos_cerrados, sin_pais: x.sin_pais, solucion_cumpl: x.solucion_cumpl, acida_cumpl: x.acida_cumpl, gest_h_cumpl: x.gest_h_cumpl, general: x.general }) : null;
+  return { mes: n?.mes, hoy: n?.hoy, desde: n?.desde, hasta: n?.hasta, dia: n?.dia,
+    metas: { solucion: n?.metas?.solucion, gestion_acida: n?.metas?.gestion_acida, gestiones_hora: n?.metas?.gestiones_hora },
+    agentes: (n?.agentes || []).map((a: any) => ({ agent_id: a.agent_id, nombre: a.nombre, dia: d(a.dia), mes: m(a.mes), dias: (a.dias || []).map(d) })),
+    sin_puente: (n?.sin_puente || []).map((s: any) => ({ agent_id: s.agent_id, nombre: s.nombre })),
+    sin_asignar: (n?.sin_asignar || []).map((s: any) => ({ agent_id: s.agent_id, nombre: s.nombre, fecha: s.fecha, intentos: s.intentos })) };
+}
+
 const MES_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
+const fechaOk = (x: unknown): x is string => typeof x === "string" && FECHA_RE.test(x) && !isNaN(Date.parse(x)) && new Date(x).toISOString().slice(0, 10) === x;   // fecha real (no 2026-13-45)
 const ESTADOS = new Set(["verificacion", "v_historica", "novedades", "agente_whatsapp", "apoyo", "ausencia", "incapacidad"]);
 const PERMANENTES = ["verificacion", "v_historica", "novedades", "agente_whatsapp"];
 const COLORES = new Set(["rojo", "amarillo", "verde"]);
@@ -201,12 +214,14 @@ Deno.serve(async (req: Request) => {
       case "matriz": {
         const mes = String(body.mes || "");
         if (!MES_RE.test(mes)) return json({ error: "mes inválido (YYYY-MM)" }, 400);
-        const dia = typeof body.dia === "string" && FECHA_RE.test(body.dia) ? body.dia : null;
-        const desde = typeof body.desde === "string" && FECHA_RE.test(body.desde) ? body.desde : null;   // filtro de fechas de la tabla mensual
-        const hasta = typeof body.hasta === "string" && FECHA_RE.test(body.hasta) ? body.hasta : null;
+        const dia = fechaOk(body.dia) && body.dia.slice(0, 7) === mes ? body.dia : null;   // el día debe estar dentro del mes
+        const desde = fechaOk(body.desde) ? body.desde : null;   // filtro de fechas de la tabla mensual
+        const hasta = fechaOk(body.hasta) ? body.hasta : null;
         const r = await rpc("var_resumen_mes", { p_mes: `${mes}-01`, p_dia: dia, p_desde: desde, p_hasta: hasta });
-        if (permitido("admin")) return json({ ok: true, ...r });
-        const p = proyectarMatriz(r);
+        let nov: any = null; let novErr = false;
+        try { nov = await rpc("var_novedades_mes", { p_mes: `${mes}-01`, p_dia: dia, p_desde: desde, p_hasta: hasta }); } catch (e) { novErr = true; console.error("novedades:", (e as Error)?.message); }
+        if (permitido("admin")) return json({ ok: true, ...r, novedades: nov, novedades_error: novErr });
+        const p = proyectarMatriz(r); p.novedades = nov ? proyectarNovedades(nov) : null; p.novedades_error = novErr;
         const s = JSON.stringify(p);
         if (PROHIBIDO.test(s)) { console.error("proyeccion: palabra prohibida detectada; se responde 500 sin cuerpo"); return new Response(null, { status: 500, headers: CORS }); }
         return new Response(JSON.stringify({ ok: true, ...p }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
@@ -220,7 +235,7 @@ Deno.serve(async (req: Request) => {
 
       case "ordenes": {         // el "ojo": órdenes gestionadas por un agente en un rango (todos los roles)
         const agent_id = String(body.agent_id || ""); const desde = String(body.desde || ""); const hasta = String(body.hasta || "");
-        if (!agent_id || !FECHA_RE.test(desde) || !FECHA_RE.test(hasta) || desde > hasta) return json({ error: "datos inválidos" }, 400);
+        if (!agent_id || !fechaOk(desde) || !fechaOk(hasta) || desde > hasta) return json({ error: "datos inválidos" }, 400);
         const tienda = typeof body.tienda === "string" && body.tienda ? String(body.tienda).slice(0, 200) : null;
         const r = await rpc("var_ordenes_agente", { p_agent_id: agent_id, p_desde: desde, p_hasta: hasta, p_tienda: tienda });
         return json({ ok: true, agent_id, desde, hasta, tienda, total: r.total, conf: r.conf, canc: r.canc, reprog: r.reprog,
@@ -228,7 +243,7 @@ Deno.serve(async (req: Request) => {
       }
       case "tiendas_agentes": {  // pestañas Efectividad/Cancelación/Gestiones: enteros por agente × tienda (todos los roles)
         const desde = String(body.desde || ""); const hasta = String(body.hasta || "");
-        if (!FECHA_RE.test(desde) || !FECHA_RE.test(hasta) || desde > hasta) return json({ error: "datos inválidos" }, 400);
+        if (!fechaOk(desde) || !fechaOk(hasta) || desde > hasta) return json({ error: "datos inválidos" }, 400);
         const agente = typeof body.agent_id === "string" && body.agent_id ? String(body.agent_id) : null;   // pop-up de un agente
         const r = await rpc("var_tiendas_agentes", { p_desde: desde, p_hasta: hasta, p_agent_id: agente });
         return json({ ok: true, desde, hasta, agentes: (r.agentes || []).map((a: any) => ({ agent_id: a.agent_id, nombre: a.nombre, cargo_permanente: a.cargo_permanente,
@@ -236,8 +251,10 @@ Deno.serve(async (req: Request) => {
           tiendas: (a.tiendas || []).map((t: any) => ({ tienda: t.tienda, gest: t.gest, conf: t.conf, canc: t.canc, reprog: t.reprog })) })) });
       }
       case "roster": {          // personas activas; con fecha, solo las que estaban en el equipo ese día (ingreso/salida)
-        const fecha = typeof body.fecha === "string" && FECHA_RE.test(body.fecha) ? body.fecha : null;
-        return json({ ok: true, agentes: await rpc("var_roster", { p_fecha: fecha, p_incluir_salidos: body.incluir_salidos === true }) });
+        const fecha = fechaOk(body.fecha) ? body.fecha : null;
+        const ros: any[] = await rpc("var_roster", { p_fecha: fecha, p_incluir_salidos: body.incluir_salidos === true });
+        if (!permitido("equipo", "admin")) for (const a of ros) { delete a.correo; delete a.sgn; }   // el correo (dato personal) solo a líderes y admin
+        return json({ ok: true, agentes: ros });
       }
       case "tiendas_pais":      // países y tiendas del historial de gestiones (un país nuevo aparece solo)
         return json({ ok: true, paises: await rpc("var_tiendas_pais", {}) });
@@ -365,7 +382,7 @@ Deno.serve(async (req: Request) => {
       case "informe": {         // informe consolidado para el área legal: rango por día de auditoría, agentes opcionales, evidencias con enlace temporal
         if (!permitido("auditoria", "admin")) return negar();
         const desde = String(body.desde || ""); const hasta = String(body.hasta || "");
-        if (!FECHA_RE.test(desde) || !FECHA_RE.test(hasta) || desde > hasta) return json({ error: "rango de fechas inválido" }, 400);
+        if (!fechaOk(desde) || !fechaOk(hasta) || desde > hasta) return json({ error: "rango de fechas inválido" }, 400);
         const agentes = Array.isArray(body.agentes) ? body.agentes.map((x: any) => String(x)).filter((x: string) => /^[\w:.\-]{1,80}$/.test(x)).slice(0, 200) : [];
         const filtroAg = agentes.length ? `&agent_id=in.(${agentes.map((x: string) => `"${x}"`).join(",")})` : "";
         const rows = await getRows(`var_auditoria?fecha_auditoria=gte.${desde}&fecha_auditoria=lte.${hasta}&anulado_por=is.null${filtroAg}&select=${AUD_SELECT}&order=fecha_auditoria.asc,momento.asc&limit=2000`);
@@ -382,6 +399,22 @@ Deno.serve(async (req: Request) => {
         if (!Number.isInteger(id) || id <= 0 || motivo.length < 3) return json({ error: "faltan el registro o el motivo" }, 400);
         await rpc("var_auditoria_anular", { p_id: id, p_motivo: motivo, p_actor: uid });
         return json({ ok: true });
+      }
+      case "nov_sin_gestion": {  // reporte Admin: novedades cerradas en Dropi sin gestión humana ni de la IA (D-024 decisión 3)
+        if (!permitido("admin")) return negar();
+        const desde = String(body.desde || ""); const hasta = String(body.hasta || "");
+        if (!fechaOk(desde) || !fechaOk(hasta) || desde > hasta) return json({ error: "rango de fechas inválido" }, 400);
+        return json({ ok: true, ...(await rpc("nov_sin_gestion", { p_desde: desde, p_hasta: hasta })) });
+      }
+      case "persona_correo": {  // correo de una persona del equipo (puente con SGN); líderes y admin
+        if (!permitido("equipo", "admin")) return negar();
+        const agent_id = String(body.agent_id || ""); const correo = String(body.correo || "").trim().toLowerCase();
+        if (!agent_id || (correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo))) return json({ error: "correo inválido" }, 400);
+        const r = await fetch(`${SURL}/rest/v1/var_agente?agent_id=eq.${encodeURIComponent(agent_id)}`, { method: "PATCH", headers: { ...DBH, Prefer: "return=representation" }, body: JSON.stringify({ correo: correo || null }) });
+        if (!r.ok) { const tx = await r.text(); console.error("persona_correo:", tx); return json({ error: /duplicate|unique/i.test(tx) ? "ese correo ya está asignado a otra persona" : "no fue posible guardar el correo" }, 400); }
+        if (!(await r.json()).length) return json({ error: "persona no encontrada" }, 404);
+        const enlazados = await rpc("var_nov_puente", {});
+        return json({ ok: true, enlazados });
       }
       case "personas_historico": { // nombres que Refresh trae (o que aparecen en gestiones) y aún no están en el equipo
         if (!permitido("equipo", "admin")) return negar();
