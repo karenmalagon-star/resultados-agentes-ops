@@ -5,7 +5,7 @@
 //  · Candidatas (nov_candidatas_estado): gestión aceptada en los últimos 180 días sin estado final; diario los primeros 14 días, semanal después;
 //    tandas de 1.000 (tope de PostgREST) cada vez que no hay jobs pendientes, sin repetir órdenes ya consultadas hoy.
 //  · Historial de estados de Dropi (con fechas reales) → nov_orden_estado_hist; último estado → nov_orden_estado.
-//  · Una vez al día trae las gestiones de la IA (ayer y hoy) → nov_ia_gestiones.
+//  · Cada hora trae las gestiones de la IA (últimos 2 días hasta mañana; `hasta` exclusivo) → nov_ia_gestiones.
 // ============================================================================
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
@@ -53,6 +53,27 @@ async function guardarResultados(res: any[]): Promise<number> {
   return est.length;
 }
 
+// Gestiones de la IA: últimos 2 días hasta MAÑANA (en el Broker `hasta` es exclusivo: desde=hasta devuelve 0 filas, verificado 25-sep).
+// Corre al inicio de CADA invocación (antes del sondeo, para no depender de que la cola esté vacía), como máximo una vez por hora; solo columnas sin datos del cliente.
+async function copiarIA(force: boolean, det: Record<string, unknown>, t0: number): Promise<void> {
+  try {
+    const desde = new Date(Date.now() - 5 * 3600000 - 2 * 86400000).toISOString().slice(0, 10);
+    const manana = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const reciente = await local(`nov_ia_gestiones?sincronizado_en=gte.${new Date(Date.now() - 3600000).toISOString()}&select=order_id&limit=1`);
+    if (reciente.length && !force) return;
+    let off = 0, ia = 0;
+    while (true) {
+      const r = await fetch(`${BROKER}/v1/ia/gestiones?desde=${desde}&hasta=${manana}&limit=1000&offset=${off}`, { headers: BH });
+      if (!r.ok) { det.ia_error = `${r.status}`; break; }
+      const b = await r.json(); const g = b.gestiones || [];
+      if (g.length) await upsert("nov_ia_gestiones", g.map((x: any) => ({ order_id: String(x.order_id), revisado_at: x.revisado_at, country: x.country ? String(x.country).toUpperCase() : null, store_name: x.store_name, trigger_evento: x.trigger_evento, decision: x.decision, status_interno: x.status_interno, resultado_dropi: x.resultado_dropi, tipo_novedad: x.tipo_novedad, ronda_id: x.ronda_id, worker_id: x.worker_id, sincronizado_en: new Date().toISOString() })), "order_id,revisado_at");
+      ia += g.length; off += b.limit || 1000;
+      if (!g.length || off >= (b.total || 0) || off > 50000 || Date.now() - t0 > 25000) break;   // tope 25 s: lo que falte lo trae la siguiente invocación
+    }
+    det.ia = ia;
+  } catch (e) { det.ia_error = (e as Error)?.message?.slice(0, 200); }
+}
+
 Deno.serve(async (req: Request) => {
   const stored = await cfg("write_key");
   if (!stored) return json({ error: "config no disponible (transitorio)" }, 503);
@@ -62,10 +83,12 @@ Deno.serve(async (req: Request) => {
   const logRow = await fetch(`${SURL}/rest/v1/nov_sync_log`, { method: "POST", headers: { ...DBH, Prefer: "return=representation" }, body: JSON.stringify({ fn: "nov-estado-dropi" }) }).then((r) => r.json()).catch(() => null);
   const logId = logRow?.[0]?.id;
   try {
+    await copiarIA(new URL(req.url).searchParams.get("force") === "1", det, t0);
+    const tA = Date.now();   // el presupuesto del sondeo se cuenta desde aquí
     // A) jobs pendientes → sondear en secuencia dentro del presupuesto
     let pend = await local(`nov_estado_jobs?status=eq.pending&order=n.asc,creado_en.asc&select=job_id,country,n`);   // lotes pequeños primero
     let sondeos = 0, guardadas = 0;
-    while (pend.length && Date.now() - t0 < INICIO_GET_MS) {
+    while (pend.length && Date.now() - tA < INICIO_GET_MS) {
       const j = pend[0];
       const r = await fetch(`${BROKER}/v1/orders/status/${j.job_id}`, { headers: BH });
       const body = await r.json().catch(() => ({}));
@@ -100,19 +123,6 @@ Deno.serve(async (req: Request) => {
     if (jobs.length) await upsert("nov_estado_jobs", jobs, "job_id");
     det.candidatas = cand.length; det.encolados = encolados; det.jobs = jobs.length;
 
-    // D) gestiones de la IA (ayer y hoy), una vez al día, solo columnas sin datos del cliente
-    const desde = new Date(Date.now() - 5 * 3600000 - 2 * 86400000).toISOString().slice(0, 10);
-    const iaHoy = await local(`nov_ia_gestiones?sincronizado_en=gte.${hoyCol}T05:00:00Z&select=order_id&limit=1`);
-    let off = 0, ia = 0;
-    while (!iaHoy.length || new URL(req.url).searchParams.get("force") === "1") {
-      const r = await fetch(`${BROKER}/v1/ia/gestiones?desde=${desde}&hasta=${hoyCol}&limit=1000&offset=${off}`, { headers: BH });
-      if (!r.ok) { det.ia_error = `${r.status}`; break; }
-      const b = await r.json(); const g = b.gestiones || [];
-      if (g.length) await upsert("nov_ia_gestiones", g.map((x: any) => ({ order_id: String(x.order_id), revisado_at: x.revisado_at, country: x.country ? String(x.country).toUpperCase() : null, store_name: x.store_name, trigger_evento: x.trigger_evento, decision: x.decision, status_interno: x.status_interno, resultado_dropi: x.resultado_dropi, tipo_novedad: x.tipo_novedad, ronda_id: x.ronda_id, worker_id: x.worker_id, sincronizado_en: new Date().toISOString() })), "order_id,revisado_at");
-      ia += g.length; off += b.limit || 1000;
-      if (!g.length || off >= (b.total || 0) || off > 50000 || Date.now() - t0 > PRESUPUESTO_MS) break;
-    }
-    det.ia = ia;
     if (logId) await patch("nov_sync_log", `id=eq.${logId}`, { fin: new Date().toISOString(), ok: true, detalle: det });
     return json({ ok: true, fase: "encolado", ...det });
   } catch (e) {
