@@ -163,6 +163,17 @@ function proyectarMatriz(r: any): any {
   };
 }
 
+// Novedades (D-024/D-027): bloque aparte de var_novedades_mes; lista blanca sin dinero
+function proyectarNovedades(n: any): any {
+  const d = (x: any) => x ? ({ fecha: x.fecha, turno: x.turno, intentos: x.intentos, ordenes: x.ordenes, ordenes_sol: x.ordenes_sol, intentos_validos: x.intentos_validos, ordenes_acidas: x.ordenes_acidas,
+    pendientes: x.pendientes, horas: x.horas, solucion_real: x.solucion_real, acida_real: x.acida_real, gest_h: x.gest_h }) : null;
+  const m = (x: any) => x ? ({ ...d(x), dias: x.dias, solucion_cumpl: x.solucion_cumpl, acida_cumpl: x.acida_cumpl, gest_h_cumpl: x.gest_h_cumpl, general: x.general }) : null;
+  return { mes: n?.mes, hoy: n?.hoy, desde: n?.desde, hasta: n?.hasta, dia: n?.dia,
+    metas: { solucion: n?.metas?.solucion, gestion_acida: n?.metas?.gestion_acida, gestiones_hora: n?.metas?.gestiones_hora },
+    agentes: (n?.agentes || []).map((a: any) => ({ agent_id: a.agent_id, nombre: a.nombre, dia: d(a.dia), mes: m(a.mes), dias: (a.dias || []).map(d) })),
+    sin_puente: (n?.sin_puente || []).map((s: any) => ({ agent_id: s.agent_id, nombre: s.nombre })) };
+}
+
 const MES_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ESTADOS = new Set(["verificacion", "v_historica", "novedades", "agente_whatsapp", "apoyo", "ausencia", "incapacidad"]);
@@ -205,8 +216,9 @@ Deno.serve(async (req: Request) => {
         const desde = typeof body.desde === "string" && FECHA_RE.test(body.desde) ? body.desde : null;   // filtro de fechas de la tabla mensual
         const hasta = typeof body.hasta === "string" && FECHA_RE.test(body.hasta) ? body.hasta : null;
         const r = await rpc("var_resumen_mes", { p_mes: `${mes}-01`, p_dia: dia, p_desde: desde, p_hasta: hasta });
-        if (permitido("admin")) return json({ ok: true, ...r });
-        const p = proyectarMatriz(r);
+        let nov: any = null; try { nov = await rpc("var_novedades_mes", { p_mes: `${mes}-01`, p_dia: dia, p_desde: desde, p_hasta: hasta }); } catch (e) { console.error("novedades:", (e as Error)?.message); }
+        if (permitido("admin")) return json({ ok: true, ...r, novedades: nov });
+        const p = proyectarMatriz(r); p.novedades = proyectarNovedades(nov);
         const s = JSON.stringify(p);
         if (PROHIBIDO.test(s)) { console.error("proyeccion: palabra prohibida detectada; se responde 500 sin cuerpo"); return new Response(null, { status: 500, headers: CORS }); }
         return new Response(JSON.stringify({ ok: true, ...p }), { status: 200, headers: { ...CORS, "content-type": "application/json" } });
@@ -382,6 +394,21 @@ Deno.serve(async (req: Request) => {
         if (!Number.isInteger(id) || id <= 0 || motivo.length < 3) return json({ error: "faltan el registro o el motivo" }, 400);
         await rpc("var_auditoria_anular", { p_id: id, p_motivo: motivo, p_actor: uid });
         return json({ ok: true });
+      }
+      case "nov_sin_gestion": {  // reporte Admin: novedades cerradas en Dropi sin gestión humana ni de la IA (D-024 decisión 3)
+        if (!permitido("admin")) return negar();
+        const desde = String(body.desde || ""); const hasta = String(body.hasta || "");
+        if (!FECHA_RE.test(desde) || !FECHA_RE.test(hasta) || desde > hasta) return json({ error: "rango de fechas inválido" }, 400);
+        return json({ ok: true, ...(await rpc("nov_sin_gestion", { p_desde: desde, p_hasta: hasta })) });
+      }
+      case "persona_correo": {  // correo de una persona del equipo (puente con SGN); líderes y admin
+        if (!permitido("equipo", "admin")) return negar();
+        const agent_id = String(body.agent_id || ""); const correo = String(body.correo || "").trim().toLowerCase();
+        if (!agent_id || (correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo))) return json({ error: "correo inválido" }, 400);
+        const r = await fetch(`${SURL}/rest/v1/var_agente?agent_id=eq.${encodeURIComponent(agent_id)}`, { method: "PATCH", headers: DBH, body: JSON.stringify({ correo: correo || null }) });
+        if (!r.ok) { const tx = await r.text(); return json({ error: /duplicate|unique/i.test(tx) ? "ese correo ya está asignado a otra persona" : tx }, 400); }
+        const enlazados = await rpc("var_nov_puente", {});
+        return json({ ok: true, enlazados });
       }
       case "personas_historico": { // nombres que Refresh trae (o que aparecen en gestiones) y aún no están en el equipo
         if (!permitido("equipo", "admin")) return negar();

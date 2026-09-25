@@ -56,6 +56,7 @@ Deno.serve(async (req: Request) => {
     const prof = await sgn(`profiles?select=id,full_name,email,role,active,meta_diaria,metas_dia,fecha_ingreso`);
     await upsert("nov_profiles", prof.map((p: any) => ({ id: p.id, full_name: p.full_name, email: p.email ? String(p.email).toLowerCase() : null, role: p.role, active: p.active, meta_diaria: p.meta_diaria, metas_dia: p.metas_dia, fecha_ingreso: p.fecha_ingreso, sincronizado_en: new Date().toISOString() })), "id");
     det.profiles = prof.length;
+    try { const r = await fetch(`${SURL}/rest/v1/rpc/var_nov_puente`, { method: "POST", headers: DBH, body: "{}" }); det.puente = r.ok ? Number(await r.text()) : -1; } catch (_) { det.puente = -1; }
     // 2) motivos (catálogo de exclusiones)
     const mot = await sgn(`motivos_devolucion?select=id,texto,orden,activo`);
     await upsert("nov_motivos", mot.map((m: any) => ({ id: m.id, texto: m.texto, orden: m.orden, activo: m.activo, sincronizado_en: new Date().toISOString() })), "id");
