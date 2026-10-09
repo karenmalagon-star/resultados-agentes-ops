@@ -80,7 +80,7 @@ async function storageFirmar(ruta: string, segundos = 3600): Promise<string> {
   const j = await r.json();
   return `${SURL}/storage/v1${j.signedURL}`;
 }
-const AUD_SELECT = "id,momento,orden,tienda,pais,celular,fecha_auditoria,fecha_gestion,descripcion,registrado_por,agent_id,agente:var_agente(nombre),tipo:var_error_tipo(id,nombre,color),tipos:var_auditoria_tipo(tipo:var_error_tipo(id,nombre,color)),adjuntos:var_auditoria_adjunto(id,ruta,nombre,mime,bytes,creado_en)";
+const AUD_SELECT = "id,momento,orden,tienda,pais,celular,fecha_auditoria,fecha_gestion,descripcion,registrado_por,agent_id,agente:var_agente(nombre),tipo:var_error_tipo!var_auditoria_tipo_id_fkey(id,nombre,color),tipos:var_auditoria_tipo(tipo:var_error_tipo!var_auditoria_tipo_tipo_id_fkey(id,nombre,color)),adjuntos:var_auditoria_adjunto(id,ruta,nombre,mime,bytes,creado_en)";
 function filaAud(e: any, nombres: Record<string, string>, conRuta = false) {
   return { id: e.id, momento: e.momento, orden: e.orden, tienda: e.tienda, pais: e.pais, celular: e.celular, fecha_auditoria: e.fecha_auditoria, fecha_gestion: e.fecha_gestion, descripcion: e.descripcion,
     agent_id: e.agent_id, agente: e.agente?.nombre || "", tipo: e.tipo ? { id: e.tipo.id, nombre: e.tipo.nombre, color: e.tipo.color } : null, registrado_por: nombres[e.registrado_por] || "",
@@ -229,7 +229,7 @@ Deno.serve(async (req: Request) => {
 
       case "errores": {   // pop-up: errores de auditoría nuevos desde un id
         const desde = Number.isSafeInteger(Number(body.desde)) && Number(body.desde) >= 0 ? Number(body.desde) : 0;
-        const rows = await getRows(`var_auditoria?id=gt.${desde}&anulado_por=is.null&select=id,momento,orden,tienda,pais,descripcion,agente:var_agente(nombre),tipo:var_error_tipo(nombre,color),tipos:var_auditoria_tipo(tipo:var_error_tipo(nombre,color))&order=id.asc&limit=50`);
+        const rows = await getRows(`var_auditoria?id=gt.${desde}&anulado_por=is.null&select=id,momento,orden,tienda,pais,descripcion,agente:var_agente(nombre),tipo:var_error_tipo!var_auditoria_tipo_id_fkey(nombre,color),tipos:var_auditoria_tipo(tipo:var_error_tipo!var_auditoria_tipo_tipo_id_fkey(nombre,color))&order=id.asc&limit=50`);
         return json({ ok: true, errores: rows.map((e: any) => { const ts = (e.tipos || []).map((x: any) => x.tipo).filter(Boolean); return { id: e.id, momento: e.momento, orden: e.orden, tienda: e.tienda, pais: e.pais, descripcion: e.descripcion, agente: e.agente?.nombre || "", tipo: ts.length ? ts.map((x: any) => x.nombre).join(" · ") : (e.tipo?.nombre || ""), color: e.tipo?.color || "", tipos: ts.map((x: any) => ({ nombre: x.nombre, color: x.color })) }; }) });
       }
 
