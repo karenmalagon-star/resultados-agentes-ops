@@ -450,8 +450,20 @@ Deno.serve(async (req: Request) => {
         const desde = typeof body.desde === "string" && FECHA_RE.test(body.desde) ? body.desde : await rpc("var_hoy_col", {});
         if (nombre.length < 3) return json({ error: "escribe el nombre completo" }, 400);
         if (!apoyo && !PERMANENTES.includes(cargo)) return json({ error: "cargo permanente inválido" }, 400);
-        const agent_id = await rpc("var_persona_agregar", { p_nombre: nombre, p_cargo: cargo, p_desde: desde, p_apoyo: apoyo, p_actor: uid, p_es_admin: permitido("admin") });
+        const correo = String(body.correo || "").trim().toLowerCase();   // correo de la app de Novedades (input 32): enlaza de una vez
+        if (correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) return json({ error: "correo inválido" }, 400);
+        const agent_id = await rpc("var_persona_agregar", { p_nombre: nombre, p_cargo: cargo, p_desde: desde, p_apoyo: apoyo, p_actor: uid, p_es_admin: permitido("admin"), p_correo: correo || null });
         return json({ ok: true, agent_id });
+      }
+      case "nov_sin_enlazar": {  // usuarios de la app de Novedades aún sin persona del equipo (alta de agentes nuevos); líderes y admin
+        if (!permitido("equipo", "admin")) return negar();
+        return json({ ok: true, personas: await rpc("var_nov_sin_enlazar", {}) });
+      }
+      case "persona_cruzar": {   // la persona ascendió y ya gestiona en Refresh: se cruza el nombre con el que Refresh la trae (alias); líderes y admin
+        if (!permitido("equipo", "admin")) return negar();
+        const agent_id = String(body.agent_id || ""); const nombre = String(body.nombre_refresh || "").trim();
+        if (!agent_id || nombre.length < 3) return json({ error: "faltan la persona o el nombre de Refresh" }, 400);
+        return json({ ok: true, ...(await rpc("var_persona_cruzar", { p_agent_id: agent_id, p_nombre_refresh: nombre, p_actor: uid })) });
       }
       case "persona_salida": {  // salida del equipo: fecha de salida, historial intacto
         if (!permitido("equipo", "admin")) return negar();
