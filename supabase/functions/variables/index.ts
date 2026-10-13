@@ -80,10 +80,10 @@ async function storageFirmar(ruta: string, segundos = 3600): Promise<string> {
   const j = await r.json();
   return `${SURL}/storage/v1${j.signedURL}`;
 }
-const AUD_SELECT = "id,momento,orden,tienda,pais,celular,fecha_auditoria,fecha_gestion,descripcion,registrado_por,agent_id,agente:var_agente(nombre),tipo:var_error_tipo(id,nombre,color),tipos:var_auditoria_tipo(tipo:var_error_tipo(id,nombre,color)),adjuntos:var_auditoria_adjunto(id,ruta,nombre,mime,bytes,creado_en)";
+const AUD_SELECT = "id,momento,orden,tienda,pais,celular,fecha_auditoria,fecha_gestion,descripcion,registrado_por,agent_id,agente:var_agente(nombre),tipo:var_error_tipo!var_auditoria_tipo_id_fkey(id,nombre,color),tipos:var_auditoria_tipo(tipo:var_error_tipo!var_auditoria_tipo_tipo_id_fkey(id,nombre,color)),medio:var_medio_gestion(id,nombre),adjuntos:var_auditoria_adjunto(id,ruta,nombre,mime,bytes,creado_en)";
 function filaAud(e: any, nombres: Record<string, string>, conRuta = false) {
   return { id: e.id, momento: e.momento, orden: e.orden, tienda: e.tienda, pais: e.pais, celular: e.celular, fecha_auditoria: e.fecha_auditoria, fecha_gestion: e.fecha_gestion, descripcion: e.descripcion,
-    agent_id: e.agent_id, agente: e.agente?.nombre || "", tipo: e.tipo ? { id: e.tipo.id, nombre: e.tipo.nombre, color: e.tipo.color } : null, registrado_por: nombres[e.registrado_por] || "",
+    agent_id: e.agent_id, agente: e.agente?.nombre || "", tipo: e.tipo ? { id: e.tipo.id, nombre: e.tipo.nombre, color: e.tipo.color } : null, registrado_por: nombres[e.registrado_por] || "", medio: e.medio?.nombre || "", medio_id: e.medio?.id ?? null,
     tipos: ((e.tipos || []).map((x: any) => x.tipo).filter(Boolean).length ? (e.tipos || []).map((x: any) => x.tipo).filter(Boolean) : (e.tipo ? [e.tipo] : [])).map((x: any) => ({ id: x.id, nombre: x.nombre, color: x.color })),
     adjuntos: (e.adjuntos || []).map((a: any) => ({ id: a.id, nombre: a.nombre, mime: a.mime, bytes: a.bytes, creado_en: a.creado_en, ...(conRuta ? { ruta: a.ruta } : {}) })) };
 }
@@ -155,7 +155,7 @@ function proyectarMatriz(r: any): any {
     metas, lideres,
     agentes: (r.agentes || []).map((a: any) => ({
       agent_id: a.agent_id, nombre: a.nombre, cargo_permanente: a.cargo_permanente, cargo_hoy: a.cargo_hoy, turno_hoy: a.turno_hoy, asignado_hasta: a.asignado_hasta,
-      dia: diaX(a.dia), auditoria: aud(a.auditoria), errores: a.errores,
+      dia: diaX(a.dia), auditoria: aud(a.auditoria), errores: a.errores, tardes: a.tardes,
       cargos: (a.cargos || []).map(cargo), dias: (a.dias || []).map(dia),
     })),
     consolidado: cons, consolidado_dia: consDia,
@@ -178,9 +178,14 @@ function proyectarNovedades(n: any): any {
 const MES_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
 const fechaOk = (x: unknown): x is string => typeof x === "string" && FECHA_RE.test(x) && !isNaN(Date.parse(x)) && new Date(x).toISOString().slice(0, 10) === x;   // fecha real (no 2026-13-45)
-const ESTADOS = new Set(["verificacion", "v_historica", "novedades", "agente_whatsapp", "apoyo", "ausencia", "incapacidad"]);
+const ESTADOS = new Set(["verificacion", "v_historica", "novedades", "agente_whatsapp", "apoyo", "ausencia", "incapacidad", "vacaciones"]);
 const PERMANENTES = ["verificacion", "v_historica", "novedades", "agente_whatsapp"];
 const COLORES = new Set(["rojo", "amarillo", "verde"]);
+function filtrosAud(body: any) {
+  const txt = (v: any, n: number) => (typeof v === "string" && v.trim()) ? v.trim().slice(0, n) : null;
+  const color = txt(body.color, 10);
+  return { p_pais: txt(body.pais, 60), p_agent_id: txt(body.agent_id, 80), p_color: color && COLORES.has(color) ? color : null, p_tienda: txt(body.tienda, 200), p_medio_id: Number.isInteger(Number(body.medio_id)) && Number(body.medio_id) > 0 ? Number(body.medio_id) : null };
+}
 
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get("origin") || "";
@@ -229,8 +234,10 @@ Deno.serve(async (req: Request) => {
 
       case "errores": {   // pop-up: errores de auditoría nuevos desde un id
         const desde = Number.isSafeInteger(Number(body.desde)) && Number(body.desde) >= 0 ? Number(body.desde) : 0;
-        const rows = await getRows(`var_auditoria?id=gt.${desde}&anulado_por=is.null&select=id,momento,orden,tienda,pais,descripcion,agente:var_agente(nombre),tipo:var_error_tipo(nombre,color),tipos:var_auditoria_tipo(tipo:var_error_tipo(nombre,color))&order=id.asc&limit=50`);
-        return json({ ok: true, errores: rows.map((e: any) => { const ts = (e.tipos || []).map((x: any) => x.tipo).filter(Boolean); return { id: e.id, momento: e.momento, orden: e.orden, tienda: e.tienda, pais: e.pais, descripcion: e.descripcion, agente: e.agente?.nombre || "", tipo: ts.length ? ts.map((x: any) => x.nombre).join(" · ") : (e.tipo?.nombre || ""), color: e.tipo?.color || "", tipos: ts.map((x: any) => ({ nombre: x.nombre, color: x.color })) }; }) });
+        const desdeTs = typeof body.desde_ts === "string" && /^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(body.desde_ts) ? body.desde_ts : null;   // registros a los que se agregó un tipo (025)
+        const filtro = desdeTs ? `or=(id.gt.${desde},actualizado_en.gt.${encodeURIComponent(desdeTs)})` : `id=gt.${desde}`;
+        const rows = await getRows(`var_auditoria?${filtro}&anulado_por=is.null&select=id,momento,actualizado_en,orden,tienda,pais,descripcion,agente:var_agente(nombre),tipo:var_error_tipo!var_auditoria_tipo_id_fkey(nombre,color),tipos:var_auditoria_tipo(tipo:var_error_tipo!var_auditoria_tipo_tipo_id_fkey(nombre,color))&order=id.asc&limit=50`);
+        return json({ ok: true, errores: rows.map((e: any) => { const ts = (e.tipos || []).map((x: any) => x.tipo).filter(Boolean); return { id: e.id, momento: e.momento, actualizado_en: e.actualizado_en, orden: e.orden, tienda: e.tienda, pais: e.pais, descripcion: e.descripcion, agente: e.agente?.nombre || "", tipo: ts.length ? ts.map((x: any) => x.nombre).join(" · ") : (e.tipo?.nombre || ""), color: e.tipo?.color || "", tipos: ts.map((x: any) => ({ nombre: x.nombre, color: x.color })) }; }) });
       }
 
       case "ordenes": {         // el "ojo": órdenes gestionadas por un agente en un rango (todos los roles)
@@ -332,6 +339,25 @@ Deno.serve(async (req: Request) => {
         const tiposOk = await getRows(`var_error_tipo?id=in.(${tipoIds.join(",")})&activo=is.true&select=id`);
         if (tiposOk.length !== tipoIds.length) return json({ error: "tipo de error inválido" }, 400);
         const tipo_id = tipoIds[0];
+        // Medio de gestión (input 30): obligatorio y del catálogo activo.
+        const medio_id = Number(body.medio_id);
+        if (!Number.isInteger(medio_id) || medio_id <= 0) return json({ error: "elige el medio de gestión" }, 400);
+        if (!(await getRows(`var_medio_gestion?id=eq.${medio_id}&activo=is.true&select=id`)).length) return json({ error: "medio de gestión inválido" }, 400);
+        // Misma orden y mismo agente: se agregan tipos al registro existente (nunca el mismo tipo dos veces). Otro agente en la misma orden = registro aparte.
+        const dup = await getRows(`var_auditoria?agent_id=eq.${encodeURIComponent(agent_id)}&orden=eq.${encodeURIComponent(orden)}&anulado_por=is.null&select=id,fecha_auditoria,descripcion,tipo_id,medio_id,tipos:var_auditoria_tipo(tipo:var_error_tipo!var_auditoria_tipo_tipo_id_fkey(id,nombre,color))`);
+        if (dup.length) {
+          const ex = dup[0]; const yaIds = new Set<number>([...(ex.tipos || []).map((x: any) => x.tipo?.id), ex.tipo_id].filter((x: any) => Number.isInteger(x)));
+          const existente = { id: ex.id, fecha_auditoria: ex.fecha_auditoria, tipos: (ex.tipos || []).map((x: any) => x.tipo).filter(Boolean) };
+          if (Number(body.agregar_a) !== Number(ex.id)) return json({ error: `esa orden ya tiene error registrado para el mismo agente (registro ${ex.id}, auditado el ${ex.fecha_auditoria}): agrega el tipo nuevo a ese registro`, existente }, 409);
+          const nuevos = tipoIds.filter((t) => !yaIds.has(t));
+          if (!nuevos.length) return json({ error: "ese tipo de error ya está registrado en esa orden para ese agente", existente }, 409);
+          await insert("var_auditoria_tipo", nuevos.map((id) => ({ auditoria_id: ex.id, tipo_id: id })), true);
+          const desc = String(ex.descripcion || ""); const add = descripcion && !desc.includes(descripcion) ? `${desc} · ${descripcion}`.slice(0, 2000) : desc;
+          const upd: any = { actualizado_en: new Date().toISOString() }; if (ex.medio_id == null) upd.medio_id = medio_id; if (add !== desc) upd.descripcion = add;
+          const r = await fetch(`${SURL}/rest/v1/var_auditoria?id=eq.${ex.id}`, { method: "PATCH", headers: { ...DBH, Prefer: "return=minimal" }, body: JSON.stringify(upd) });
+          if (!r.ok) throw new Error(`db ${r.status}: ${await r.text()}`);
+          return json({ ok: true, id: ex.id, agregado: true, tipo_ids: nuevos });
+        }
         // Celular: manda el que ya está en el sistema; si la orden no está, el auditor debe escribirlo.
         const contacto = await rpc("var_orden_contacto", { p_orden: orden });
         let celular: string | null = contacto?.celular || null;
@@ -340,10 +366,8 @@ Deno.serve(async (req: Request) => {
           if (body.celular_manual !== true || c.length < 7 || c.length > 15) return json({ error: "la orden no está en el sistema: escribe el celular del cliente (7 a 15 dígitos)", pedir_celular: true }, 400);
           celular = c;
         }
-        const dup = await getRows(`var_auditoria?agent_id=eq.${encodeURIComponent(agent_id)}&orden=eq.${encodeURIComponent(orden)}&anulado_por=is.null&select=id,fecha_auditoria`);
-        if (dup.length) return json({ error: `esa orden ya está registrada con error para el mismo agente (registro ${dup[0].id}, auditado el ${dup[0].fecha_auditoria}); si falta un tipo o una evidencia, anúlalo y regístralo de nuevo` }, 409);
         const row = await insert("var_auditoria", { agent_id, orden: orden.slice(0, 60), tienda: body.tienda ? String(body.tienda).slice(0, 200) : (contacto?.tienda || null), pais: body.pais ? String(body.pais).slice(0, 60) : (contacto?.pais || null),
-          celular, fecha_auditoria: fa, fecha_gestion: fg, tipo_id, descripcion: descripcion.slice(0, 2000), registrado_por: uid });
+          celular, fecha_auditoria: fa, fecha_gestion: fg, tipo_id, medio_id, descripcion: descripcion.slice(0, 2000), registrado_por: uid });
         const nuevoId = row?.[0]?.id;
         if (nuevoId) await insert("var_auditoria_tipo", tipoIds.map((id) => ({ auditoria_id: nuevoId, tipo_id: id })), true);
         return json({ ok: true, id: nuevoId, celular, tipo_ids: tipoIds });
@@ -454,16 +478,83 @@ Deno.serve(async (req: Request) => {
       }
       case "lideres_semana": {  // turno de cada líder por semana (lectura para todos)
         const desde = typeof body.desde === "string" && FECHA_RE.test(body.desde) ? body.desde : null;
-        const rows = await getRows(`var_lider_semana?select=semana,lider_uid,turno,lider:var_usuarios!var_lider_semana_lider_uid_fkey(nombre,etiqueta)${desde ? `&semana=gte.${desde}` : ""}&order=semana.desc,turno.asc&limit=40`);
+        const rows = await getRows(`var_lider_semana?select=semana,lider_uid,turno,reemplazo_de,lider:var_usuarios!var_lider_semana_lider_uid_fkey(nombre,etiqueta),titular:var_usuarios!var_lider_semana_reemplazo_de_fkey(nombre)${desde ? `&semana=gte.${desde}` : ""}&order=semana.desc,turno.asc&limit=60`);
         const lideres = await getRows(`var_usuarios?activo=is.true&rol=in.(equipo,admin)&select=auth_uid,nombre,etiqueta,rol&order=nombre.asc`);
-        return json({ ok: true, semanas: rows.map((r: any) => ({ semana: r.semana, lider_uid: r.lider_uid, turno: r.turno, nombre: r.lider?.nombre || "", etiqueta: r.lider?.etiqueta || "" })), lideres: lideres.filter((l: any) => l.rol === "equipo" || l.etiqueta) });
+        return json({ ok: true, semanas: rows.map((r: any) => ({ semana: r.semana, lider_uid: r.lider_uid, turno: r.turno, nombre: r.lider?.nombre || "", etiqueta: r.lider?.etiqueta || "", reemplazo_de: r.reemplazo_de || null, titular: r.titular?.nombre || "" })), lideres: lideres.filter((l: any) => l.rol === "equipo" || l.etiqueta) });
       }
       case "lider_semana_set": {
         if (!permitido("admin")) return negar();
         const semana = String(body.semana || ""); const lider_uid = String(body.lider_uid || ""); const turno = String(body.turno || "");
         if (!FECHA_RE.test(semana) || !/^[0-9a-f-]{36}$/i.test(lider_uid) || (turno !== "M" && turno !== "T")) return json({ error: "datos inválidos" }, 400);
-        await insert("var_lider_semana", { semana, lider_uid, turno, creado_por: uid }, true);
+        // Co-cargo (input 31): reemplazo_de = titular al que cubre; firma y registra, pero la variable sigue siendo del titular.
+        const reemplazo_de = typeof body.reemplazo_de === "string" && /^[0-9a-f-]{36}$/i.test(body.reemplazo_de) && body.reemplazo_de !== lider_uid ? body.reemplazo_de : null;
+        if (reemplazo_de) {
+          if (!(await getRows(`var_usuarios?auth_uid=eq.${reemplazo_de}&activo=is.true&rol=in.(equipo,admin)&select=auth_uid`)).length) return json({ error: "titular inválido" }, 400);
+          if ((await getRows(`var_lider_semana?semana=eq.${semana}&lider_uid=eq.${reemplazo_de}&reemplazo_de=eq.${lider_uid}&select=lider_uid`)).length) return json({ error: "ese titular ya figura como reemplazo de esta persona en la misma semana" }, 409);
+        } else {
+          const otro = await getRows(`var_lider_semana?semana=eq.${semana}&turno=eq.${turno}&reemplazo_de=is.null&lider_uid=neq.${lider_uid}&select=lider_uid`);
+          if (otro.length) return json({ error: "ese turno ya tiene titular esa semana: márcalo como reemplazo o quita al otro" }, 409);
+        }
+        await insert("var_lider_semana", { semana, lider_uid, turno, reemplazo_de, creado_por: uid }, true);
         return json({ ok: true });
+      }
+      case "lider_semana_quitar": {   // quitar a un líder de una semana (admin)
+        if (!permitido("admin")) return negar();
+        const semana = String(body.semana || ""); const lider_uid = String(body.lider_uid || "");
+        if (!FECHA_RE.test(semana) || !/^[0-9a-f-]{36}$/i.test(lider_uid)) return json({ error: "datos inválidos" }, 400);
+        const r = await fetch(`${SURL}/rest/v1/var_lider_semana?semana=eq.${semana}&lider_uid=eq.${lider_uid}`, { method: "DELETE", headers: { ...DBH, Prefer: "return=minimal" } });
+        if (!r.ok) throw new Error(`db ${r.status}: ${await r.text()}`);
+        return json({ ok: true });
+      }
+      case "puntualidad_mes": {   // tardes por agente en el mes (equipo, auditoría y admin)
+        const mes = String(body.mes || ""); if (!MES_RE.test(mes)) return json({ error: "mes inválido" }, 400);
+        const dias = fechaOk(body.fecha) ? await getRows(`var_puntualidad_dia?fecha=eq.${body.fecha}&select=agent_id,tarde`) : [];
+        return json({ ok: true, agentes: await rpc("var_puntualidad_mes", { p_mes: `${mes}-01` }), dia: dias });
+      }
+      case "puntualidad_set": {   // el líder marca quién llegó tarde; cualquier día del mes en curso (input 31); meses anteriores solo admin
+        if (!permitido("equipo", "admin")) return negar();
+        const fecha = String(body.fecha || ""); const items = Array.isArray(body.items) ? body.items.slice(0, 200) : [];
+        if (!fechaOk(fecha) || !items.length) return json({ error: "fecha o agentes inválidos" }, 400);
+        const hoyCol = await rpc("var_hoy_col", {});
+        if (fecha > hoyCol) return json({ error: "la fecha no puede ser futura" }, 400);
+        if (fecha.slice(0, 7) !== hoyCol.slice(0, 7) && !permitido("admin")) return json({ error: "solo un administrador puede modificar meses anteriores" }, 403);
+        const estadoMes = await rpc("var_estado_mes", { p_mes: fecha.slice(0, 7) + "-01" });
+        if (estadoMes !== "abierto" && !permitido("admin")) return json({ error: `el mes está ${estadoMes}: solo un administrador puede corregirlo` }, 403);
+        // Solo agentes con asignación trabajada ese día (vacaciones/ausencia/incapacidad y no asignados no se miden, revisión 025).
+        const asg = await getRows(`var_asignacion?vigente=is.true&fecha=eq.${fecha}&select=agent_id,estado`);
+        const trabajo = new Set(asg.filter((a: any) => !["ausencia", "incapacidad", "vacaciones"].includes(a.estado)).map((a: any) => a.agent_id));
+        const rows = items.filter((it: any) => it && typeof it.agent_id === "string" && trabajo.has(it.agent_id)).map((it: any) => ({ fecha, agent_id: it.agent_id, tarde: it.tarde === true, registrado_por: uid }));
+        if (rows.length) await insert("var_puntualidad_dia", rows, true);
+        const omitidos = items.length - rows.length;
+        return json({ ok: true, n: rows.length, omitidos });
+      }
+      case "medios": {   // catálogo de medios de gestión (todos los roles con sesión)
+        const rows = await getRows(`var_medio_gestion?activo=is.true&select=id,nombre,orden&order=orden.asc,nombre.asc`);
+        return json({ ok: true, medios: rows });
+      }
+      case "medio_set": {   // nuevo medio de gestión (auditoría y admin); si existe, devuelve el existente
+        if (!permitido("auditoria", "admin")) return negar();
+        const nombre = String(body.nombre || "").trim();
+        if (nombre.length < 2 || nombre.length > 60) return json({ error: "nombre de 2 a 60 letras" }, 400);
+        const norm = await rpc("var_norm", { s: nombre });
+        const ya = await getRows(`var_medio_gestion?nombre_norm=eq.${encodeURIComponent(norm)}&select=id,nombre`);
+        if (ya.length) return json({ ok: true, medio: ya[0], existia: true });
+        const maxo = await getRows(`var_medio_gestion?select=orden&order=orden.desc&limit=1`);
+        const row = await insert("var_medio_gestion", { nombre, nombre_norm: norm, orden: (maxo[0]?.orden || 0) + 1, creado_por: uid });
+        return json({ ok: true, medio: { id: row?.[0]?.id, nombre }, existia: false });
+      }
+      case "aud_tablero": {   // tablero de auditoría con filtros (auditoría y admin)
+        if (!permitido("auditoria", "admin")) return negar();
+        const mes = String(body.mes || ""); if (!MES_RE.test(mes)) return json({ error: "mes inválido" }, 400);
+        const f = filtrosAud(body);
+        return json({ ok: true, ...(await rpc("var_auditoria_tablero", { p_mes: `${mes}-01`, ...f })) });
+      }
+      case "aud_detalle": {   // órdenes con error de un agente con los mismos filtros (auditoría y admin)
+        if (!permitido("auditoria", "admin")) return negar();
+        const mes = String(body.mes || ""); const agent_id = String(body.agent_id || "");
+        if (!MES_RE.test(mes) || !agent_id) return json({ error: "mes o agente inválido" }, 400);
+        const f = filtrosAud(body);
+        return json({ ok: true, errores: await rpc("var_auditoria_detalle", { p_mes: `${mes}-01`, p_agent_id: agent_id, p_pais: f.p_pais, p_color: f.p_color, p_tienda: f.p_tienda, p_medio_id: f.p_medio_id }) });
       }
 
       // ---------------- solo admin ----------------
