@@ -272,8 +272,15 @@ Deno.serve(async (req: Request) => {
       case "asignaciones": {
         const fecha = String(body.fecha || "");
         if (!FECHA_RE.test(fecha)) return json({ error: "fecha inválida" }, 400);
-        const rows = await getRows(`var_asignacion?vigente=is.true&fecha=eq.${fecha}&select=agent_id,turno,estado,es_na,lider_uid,lider:var_usuarios!var_asignacion_lider_uid_fkey(nombre)&order=agent_id.asc`);
-        return json({ ok: true, fecha, asignaciones: rows.map((a: any) => ({ agent_id: a.agent_id, turno: a.turno, estado: a.estado, es_na: a.es_na, lider_uid: a.lider_uid, lider: a.lider?.nombre || "" })) });
+        const rows = await getRows(`var_asignacion?vigente=is.true&fecha=eq.${fecha}&select=agent_id,turno,estado,es_na,lider_uid,replicada,creado_en,creado_por,revisada_por,revisada_en,lider:var_usuarios!var_asignacion_lider_uid_fkey(nombre)&order=agent_id.asc`);
+        // meta (028/029): réplica sin ajustes, réplica revisada (confirmada sin cambios) o último ajuste manual (quién y cuándo)
+        const manuales = rows.filter((a: any) => !a.replicada);
+        const ult = manuales.sort((a: any, b: any) => String(b.creado_en).localeCompare(String(a.creado_en)))[0];
+        const rev = rows.filter((a: any) => a.replicada && a.revisada_en).sort((a: any, b: any) => String(b.revisada_en).localeCompare(String(a.revisada_en)))[0];
+        const nombreDe = async (u: string | null) => u ? ((await getRows(`var_usuarios?auth_uid=eq.${u}&select=nombre`))[0]?.nombre || "") : "";
+        const meta = { replicadas: rows.filter((a: any) => a.replicada).length, manuales: manuales.length, ajuste_por: ult ? await nombreDe(ult.creado_por) : "", ajuste_en: ult ? ult.creado_en : null,
+                       revisada_por: !ult && rev ? await nombreDe(rev.revisada_por) : "", revisada_en: !ult && rev ? rev.revisada_en : null };
+        return json({ ok: true, fecha, meta, asignaciones: rows.map((a: any) => ({ agent_id: a.agent_id, turno: a.turno, estado: a.estado, es_na: a.es_na, lider_uid: a.lider_uid, lider: a.lider?.nombre || "", replicada: a.replicada })) });
       }
 
       case "asignar": {
@@ -281,7 +288,7 @@ Deno.serve(async (req: Request) => {
         const fecha = String(body.fecha || "");
         const items = Array.isArray(body.items) ? body.items.slice(0, 200) : [];
         if (!FECHA_RE.test(fecha)) return json({ error: "fecha inválida" }, 400);
-        if (!items.length) return json({ error: "sin agentes" }, 400);
+        if (!items.length && body.confirmar !== true) return json({ error: "sin agentes" }, 400);   // confirmar=true: revisar una réplica sin cambios (029)
         // Fechas anteriores a hoy: solo admin (inputs/13).
         const hoyCol = await rpc("var_hoy_col", {});
         if (fecha < hoyCol && !permitido("admin")) return json({ error: "solo un administrador puede modificar días anteriores" }, 403);
@@ -301,6 +308,8 @@ Deno.serve(async (req: Request) => {
           catch (e: any) { out.push({ agent_id, error: e.message, conflicto: e.pg === "23505" }); }
         }
         const conflicto = out.some((o) => o.conflicto);
+        // Réplica revisada (029): quien guarda confirma las filas replicadas que no cambiaron
+        await fetch(`${SURL}/rest/v1/var_asignacion?fecha=eq.${fecha}&vigente=is.true&replicada=is.true`, { method: "PATCH", headers: { ...DBH, Prefer: "return=minimal" }, body: JSON.stringify({ revisada_por: uid, revisada_en: new Date().toISOString() }) }).catch(() => {});
         return json({ ok: !out.some((o) => o.error), resultados: out }, conflicto ? 409 : 200);
       }
 
@@ -510,6 +519,33 @@ Deno.serve(async (req: Request) => {
         await insert("var_lider_semana", { semana, lider_uid, turno, reemplazo_de, creado_por: uid }, true);
         return json({ ok: true });
       }
+      case "asignacion_quitar": {   // apoyo que no trabaja ese día (líderes y admin; días anteriores solo admin)
+        if (!permitido("equipo", "admin")) return negar();
+        const fecha = String(body.fecha || ""); const agent_id = String(body.agent_id || "");
+        if (!fechaOk(fecha) || !agent_id) return json({ error: "fecha o persona inválida" }, 400);
+        const hoyQ = await rpc("var_hoy_col", {});
+        if (fecha < hoyQ && !permitido("admin")) return json({ error: "solo un administrador puede modificar días anteriores" }, 403);
+        const estadoQ = await rpc("var_estado_mes", { p_mes: fecha.slice(0, 7) + "-01" });
+        if (estadoQ !== "abierto" && !permitido("admin")) return json({ error: `el mes está ${estadoQ}: solo un administrador puede corregirlo` }, 403);
+        return json({ ok: true, n: await rpc("var_asignacion_quitar", { p_fecha: fecha, p_agent_id: agent_id, p_actor: uid }) });
+      }
+      case "lider_ausencias": {   // vacaciones/ausencias de los líderes por rango (lectura: líderes y admin)
+        if (!permitido("equipo", "admin")) return negar();
+        const desde = fechaOk(body.desde) ? body.desde : null;
+        return json({ ok: true, ausencias: await rpc("var_lider_ausencias", { p_desde: desde }) });
+      }
+      case "lider_ausencia_set": {   // registrar vacaciones/ausencia del líder (solo admin)
+        if (!permitido("admin")) return negar();
+        const lider_uid = String(body.lider_uid || ""); const desde = String(body.desde || ""); const hasta = String(body.hasta || ""); const tipo = String(body.tipo || "");
+        if (!/^[0-9a-f-]{36}$/i.test(lider_uid) || !fechaOk(desde) || !fechaOk(hasta) || !["vacaciones", "ausencia", "incapacidad", "descanso"].includes(tipo)) return json({ error: "datos inválidos" }, 400);
+        return json({ ok: true, n: await rpc("var_lider_ausencia_set", { p_lider: lider_uid, p_desde: desde, p_hasta: hasta, p_tipo: tipo, p_actor: uid }) });
+      }
+      case "lider_ausencia_quitar": {
+        if (!permitido("admin")) return negar();
+        const lider_uid = String(body.lider_uid || ""); const desde = String(body.desde || ""); const hasta = String(body.hasta || "");
+        if (!/^[0-9a-f-]{36}$/i.test(lider_uid) || !fechaOk(desde) || !fechaOk(hasta)) return json({ error: "datos inválidos" }, 400);
+        return json({ ok: true, n: await rpc("var_lider_ausencia_quitar", { p_lider: lider_uid, p_desde: desde, p_hasta: hasta }) });
+      }
       case "lider_semana_quitar": {   // quitar a un líder de una semana (admin)
         if (!permitido("admin")) return negar();
         const semana = String(body.semana || ""); const lider_uid = String(body.lider_uid || "");
@@ -573,7 +609,9 @@ Deno.serve(async (req: Request) => {
       case "dinero": {          // monto estimado del mes por agente y líder — SOLO admin
         if (!permitido("admin")) return negar();
         const mes = String(body.mes || ""); if (!MES_RE.test(mes)) return json({ error: "mes inválido" }, 400);
-        return json({ ok: true, ...(await rpc("var_calcular_mes", { p_mes: `${mes}-01` })) });
+        const calc = await rpc("var_calcular_mes", { p_mes: `${mes}-01` });
+        let reemplazos: any[] = []; try { reemplazos = await rpc("var_reemplazos_mes", { p_mes: `${mes}-01` }); } catch (e) { console.error("reemplazos:", (e as Error)?.message); }
+        return json({ ok: true, ...calc, reemplazos });   // rendimiento del reemplazo: informativo, no entra al pago (D-036)
       }
       case "usuarios": {
         if (!permitido("admin")) return negar();
