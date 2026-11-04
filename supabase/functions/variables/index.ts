@@ -609,7 +609,9 @@ Deno.serve(async (req: Request) => {
       case "dinero": {          // monto estimado del mes por agente y líder — SOLO admin
         if (!permitido("admin")) return negar();
         const mes = String(body.mes || ""); if (!MES_RE.test(mes)) return json({ error: "mes inválido" }, 400);
-        const calc = await rpc("var_calcular_mes", { p_mes: `${mes}-01` });
+        const desdeP = fechaOk(body.desde) && String(body.desde).slice(0, 7) === mes ? body.desde : null;   // rango dentro del mes (030)
+        const hastaP = fechaOk(body.hasta) && String(body.hasta).slice(0, 7) === mes ? body.hasta : null;
+        const calc = await rpc("var_calcular_mes", { p_mes: `${mes}-01`, p_desde: desdeP, p_hasta: hastaP });
         let reemplazos: any[] = []; try { reemplazos = await rpc("var_reemplazos_mes", { p_mes: `${mes}-01` }); } catch (e) { console.error("reemplazos:", (e as Error)?.message); }
         return json({ ok: true, ...calc, reemplazos });   // rendimiento del reemplazo: informativo, no entra al pago (D-036)
       }
