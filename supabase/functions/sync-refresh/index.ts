@@ -82,7 +82,9 @@ Deno.serve(async (req: Request) => {
           CACHE_ROWS.push({ id: rec.id, status: st[0], rec, created_date: cd });
           // Contacto del cliente por orden (para el detalle de gestión del módulo de compensación). Tabla permanente:
           // orders_cache se purga a ~5 días, orders_contact no. Solo se guarda si Refresh trae teléfono.
-          if (o.client && o.client.phone) CONTACT_ROWS.push({ order_id: rec.id, phone: String(o.client.phone).slice(0, 40), client_name: (((o.client.name || "") + " " + (o.client.surname || "")).trim() || null), store: rec.st, updated_at: nowISO });
+          // Nota interna que escribe el agente en Refresh (input 37): se guarda junto al contacto; se actualiza en cada corrida mientras la orden esté en la ventana.
+          const nota = typeof o.internalNotes === "string" && o.internalNotes.trim() ? o.internalNotes.trim().slice(0, 1000) : null;
+          if ((o.client && o.client.phone) || nota) CONTACT_ROWS.push({ order_id: rec.id, phone: o.client && o.client.phone ? String(o.client.phone).slice(0, 40) : null, client_name: ((((o.client && o.client.name) || "") + " " + ((o.client && o.client.surname) || "")).trim() || null), store: rec.st, internal_notes: nota, updated_at: nowISO });
         }
         of += rows.length;
       }
