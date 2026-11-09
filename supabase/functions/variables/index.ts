@@ -246,7 +246,7 @@ Deno.serve(async (req: Request) => {
         const tienda = typeof body.tienda === "string" && body.tienda ? String(body.tienda).slice(0, 200) : null;
         const r = await rpc("var_ordenes_agente", { p_agent_id: agent_id, p_desde: desde, p_hasta: hasta, p_tienda: tienda });
         return json({ ok: true, agent_id, desde, hasta, tienda, total: r.total, conf: r.conf, canc: r.canc, reprog: r.reprog,
-          ordenes: (r.ordenes || []).map((o: any) => ({ orden: o.orden, celular: o.celular, tipo: o.tipo, fecha: o.fecha, hora: o.hora, motivo: o.motivo, tienda: o.tienda })) });
+          ordenes: (r.ordenes || []).map((o: any) => ({ orden: o.orden, celular: o.celular, tipo: o.tipo, fecha: o.fecha, hora: o.hora, motivo: o.motivo, nota: o.nota, tienda: o.tienda })) });
       }
       case "tiendas_agentes": {  // pestañas Efectividad/Cancelación/Gestiones: enteros por agente × tienda (todos los roles)
         const desde = String(body.desde || ""); const hasta = String(body.hasta || "");
