@@ -149,10 +149,13 @@ create trigger trg_assets_history
 -- ============================================================
 -- Registro de que funcion dispara cada llamada de cron (las alertas dicen QUE fallo)
 create table if not exists public.cron_calls (
-  req_id bigint primary key,
+  req_id bigint not null,
   fn     text not null,
   at     timestamptz not null default now()
 );
+-- 032 (11-nov-2026): sin llave única en req_id. pg_net reinicia su numeración cuando la base se reinicia; con PRIMARY KEY
+-- los ids nuevos chocaban con los de los últimos 7 días y ninguna copia salía.
+create index if not exists cron_calls_req_at_idx on public.cron_calls (req_id, at desc);
 revoke all on public.cron_calls from anon;
 revoke all on public.cron_calls from authenticated;
 
@@ -203,7 +206,7 @@ begin
     coalesce(left(h.content::text, 150), coalesce(h.error_msg, 'sin detalle')))
   into fallas
   from net._http_response h
-  left join public.cron_calls cc on cc.req_id = h.id
+  left join lateral (select c.fn from public.cron_calls c where c.req_id = h.id and c.at between h.created - interval '15 minutes' and h.created + interval '1 minute' order by c.at desc limit 1) cc on true   -- 032: req_id ya no es único (pg_net reinicia la numeración al reiniciar la base)
   where h.created > now() - interval '35 minutes'
     and (h.status_code is distinct from 200
          or h.error_msg is not null
