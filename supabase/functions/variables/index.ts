@@ -129,7 +129,7 @@ function proyectarMatriz(r: any): any {
     cancelacion_real: c.cancelacion_real, cancelacion_cumpl: c.cancelacion_cumpl,
     ritmo: c.ritmo, compuerta: c.compuerta, general: c.general,
   });
-  const dia = (d: any) => ({ fecha: d.fecha, estado: d.estado, turno: d.turno, gest: d.gest, conf: d.conf, canc: d.canc, reprog: d.reprog, horas: d.horas });
+  const dia = (d: any) => ({ fecha: d.fecha, estado: d.estado, turno: d.turno, gest: d.gest, conf: d.conf, canc: d.canc, reprog: d.reprog, horas: d.horas, ...(d.bloque ? { bloque: d.bloque } : {}) });
   const diaX = (x: any) => x ? ({ fecha: x.fecha, cargo: x.cargo, turno: x.turno, gest: x.gest, conf: x.conf, canc: x.canc, reprog: x.reprog, horas: x.horas,
     efectividad_real: x.efectividad_real, efectividad_cumpl: x.efectividad_cumpl, cancelacion_real: x.cancelacion_real, cancelacion_cumpl: x.cancelacion_cumpl,
     ritmo: x.ritmo, compuerta: x.compuerta, general: x.general, medible: x.medible }) : null;
@@ -156,6 +156,7 @@ function proyectarMatriz(r: any): any {
     agentes: (r.agentes || []).map((a: any) => ({
       agent_id: a.agent_id, nombre: a.nombre, cargo_permanente: a.cargo_permanente, cargo_hoy: a.cargo_hoy, turno_hoy: a.turno_hoy, asignado_hasta: a.asignado_hasta,
       dia: diaX(a.dia), auditoria: aud(a.auditoria), errores: a.errores, tardes: a.tardes,
+      dia_bloques: Array.isArray(a.dia_bloques) ? a.dia_bloques.map((x: any) => ({ ...diaX(x), bloque: x.bloque, desde_hh: x.desde_hh, hasta_hh: x.hasta_hh })) : null,   // dos cargos en la jornada (033)
       cargos: (a.cargos || []).map(cargo), dias: (a.dias || []).map(dia),
     })),
     consolidado: cons, consolidado_dia: consDia,
@@ -178,6 +179,10 @@ function proyectarNovedades(n: any): any {
 const MES_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
 const fechaOk = (x: unknown): x is string => typeof x === "string" && FECHA_RE.test(x) && !isNaN(Date.parse(x)) && new Date(x).toISOString().slice(0, 10) === x;   // fecha real (no 2026-13-45)
+// Media hora del día (033): "09:30" <-> 19. Solo horas en punto o y media.
+const hhDe = (x: unknown): number | null => { const m = typeof x === "string" ? /^([01]?\d|2[0-3]):(00|30)$/.exec(x.trim()) : null; return m ? Number(m[1]) * 2 + (m[2] === "30" ? 1 : 0) : null; };
+const hhTxt = (h: number | null | undefined): string => h == null ? "" : `${String(Math.floor(h / 2)).padStart(2, "0")}:${h % 2 ? "30" : "00"}`;
+const AUSENCIAS = new Set(["ausencia", "incapacidad", "vacaciones"]);
 const ESTADOS = new Set(["verificacion", "v_historica", "novedades", "agente_whatsapp", "apoyo", "ausencia", "incapacidad", "vacaciones"]);
 const PERMANENTES = ["verificacion", "v_historica", "novedades", "agente_whatsapp"];
 const COLORES = new Set(["rojo", "amarillo", "verde"]);
@@ -272,15 +277,18 @@ Deno.serve(async (req: Request) => {
       case "asignaciones": {
         const fecha = String(body.fecha || "");
         if (!FECHA_RE.test(fecha)) return json({ error: "fecha inválida" }, 400);
-        const rows = await getRows(`var_asignacion?vigente=is.true&fecha=eq.${fecha}&select=agent_id,turno,estado,es_na,lider_uid,replicada,creado_en,creado_por,revisada_por,revisada_en,lider:var_usuarios!var_asignacion_lider_uid_fkey(nombre)&order=agent_id.asc`);
+        const rows = await getRows(`var_asignacion?vigente=is.true&fecha=eq.${fecha}&select=agent_id,turno,estado,es_na,lider_uid,replicada,creado_en,creado_por,revisada_por,revisada_en,bloque,desde_hh,lider:var_usuarios!var_asignacion_lider_uid_fkey(nombre)&order=agent_id.asc,bloque.asc`);
+        const seg: Record<string, any> = {};   // segundo cargo del día (033), por agente
+        for (const a of rows) if (a.bloque === 2) seg[a.agent_id] = a;
         // meta (028/029): réplica sin ajustes, réplica revisada (confirmada sin cambios) o último ajuste manual (quién y cuándo)
         const manuales = rows.filter((a: any) => !a.replicada);
         const ult = manuales.sort((a: any, b: any) => String(b.creado_en).localeCompare(String(a.creado_en)))[0];
         const rev = rows.filter((a: any) => a.replicada && a.revisada_en).sort((a: any, b: any) => String(b.revisada_en).localeCompare(String(a.revisada_en)))[0];
         const nombreDe = async (u: string | null) => u ? ((await getRows(`var_usuarios?auth_uid=eq.${u}&select=nombre`))[0]?.nombre || "") : "";
-        const meta = { replicadas: rows.filter((a: any) => a.replicada).length, manuales: manuales.length, ajuste_por: ult ? await nombreDe(ult.creado_por) : "", ajuste_en: ult ? ult.creado_en : null,
+        const meta = { replicadas: rows.filter((a: any) => a.replicada && a.bloque !== 2).length, manuales: manuales.filter((a: any) => a.bloque !== 2).length, ajuste_por: ult ? await nombreDe(ult.creado_por) : "", ajuste_en: ult ? ult.creado_en : null,
                        revisada_por: !ult && rev ? await nombreDe(rev.revisada_por) : "", revisada_en: !ult && rev ? rev.revisada_en : null };
-        return json({ ok: true, fecha, meta, asignaciones: rows.map((a: any) => ({ agent_id: a.agent_id, turno: a.turno, estado: a.estado, es_na: a.es_na, lider_uid: a.lider_uid, lider: a.lider?.nombre || "", replicada: a.replicada })) });
+        return json({ ok: true, fecha, meta, asignaciones: rows.filter((a: any) => a.bloque !== 2).map((a: any) => ({ agent_id: a.agent_id, turno: a.turno, estado: a.estado, es_na: a.es_na, lider_uid: a.lider_uid, lider: a.lider?.nombre || "", replicada: a.replicada,
+          estado2: seg[a.agent_id]?.estado || "", cambio: hhTxt(seg[a.agent_id]?.desde_hh) })) });
       }
 
       case "asignar": {
@@ -289,9 +297,15 @@ Deno.serve(async (req: Request) => {
         const items = Array.isArray(body.items) ? body.items.slice(0, 200) : [];
         if (!FECHA_RE.test(fecha)) return json({ error: "fecha inválida" }, 400);
         if (!items.length && body.confirmar !== true) return json({ error: "sin agentes" }, 400);   // confirmar=true: revisar una réplica sin cambios (029)
-        // Fechas anteriores a hoy: solo admin (inputs/13).
+        // Fechas anteriores a hoy: admin cambia todo (inputs/13); el líder solo puede cambiar el Estado (ausencia, incapacidad,
+        // vacaciones, o volver a "trabaja" con el cargo permanente) en días anteriores del mes en curso (input 39: la incapacidad
+        // no siempre llega el mismo día). El cargo del día y el turno de un día pasado siguen siendo de Administración.
         const hoyCol = await rpc("var_hoy_col", {});
-        if (fecha < hoyCol && !permitido("admin")) return json({ error: "solo un administrador puede modificar días anteriores" }, 403);
+        const pasadoLider = fecha < hoyCol && !permitido("admin");
+        if (pasadoLider && fecha.slice(0, 7) !== String(hoyCol).slice(0, 7)) return json({ error: "solo un administrador puede modificar días de meses anteriores" }, 403);
+        if (pasadoLider && !items.length) return json({ error: "sin agentes" }, 400);
+        const previas: Record<string, any> = {};
+        if (pasadoLider) for (const a of await getRows(`var_asignacion?vigente=is.true&bloque=eq.1&fecha=eq.${fecha}&select=agent_id,turno,estado,lider_uid`)) previas[a.agent_id] = a;
         // Tras el cierre de datos del mes solo escribe admin (diseño §5.6).
         const estado = await rpc("var_estado_mes", { p_mes: fecha.slice(0, 7) + "-01" });
         if (estado !== "abierto" && !permitido("admin")) return json({ error: `el mes está ${estado}: solo un administrador puede corregirlo` }, 403);
@@ -299,17 +313,35 @@ Deno.serve(async (req: Request) => {
         const lider = permitido("admin") && typeof body.lider_uid === "string" && body.lider_uid ? body.lider_uid : uid;
         const out: any[] = [];
         for (const it of items) {
-          const agent_id = String(it.agent_id || ""); const turno = String(it.turno || body.turno || "");
+          const agent_id = String(it.agent_id || ""); let turno = String(it.turno || body.turno || "");
           const esNa = it.estado === "" || it.estado === "na" || it.estado == null;
           const est = esNa ? "verificacion" : String(it.estado);   // con es_na el servidor usa el cargo permanente
           if (!agent_id || (!esNa && !ESTADOS.has(est))) { out.push({ agent_id, error: "estado inválido" }); continue; }
+          // Segundo cargo de la jornada (033): cargo distinto + hora de cambio en punto o y media
+          const est2 = it.estado2 == null || it.estado2 === "" ? null : String(it.estado2);
+          const cambio = est2 ? hhDe(it.cambio) : null;
+          if (est2 && (!ESTADOS.has(est2) || AUSENCIAS.has(est2))) { out.push({ agent_id, error: "segundo cargo inválido" }); continue; }
+          if (est2 && cambio == null) { out.push({ agent_id, error: "falta la hora de cambio del segundo cargo (en punto o y media)" }); continue; }
+          let firma = lider;
+          if (pasadoLider) {
+            const prev = previas[agent_id];
+            const marca = !esNa && AUSENCIAS.has(est);                         // pasa a ausencia, incapacidad o vacaciones
+            const vuelve = esNa && !!prev && AUSENCIAS.has(prev.estado);       // vuelve a "trabaja" con su cargo permanente
+            if (!prev) { out.push({ agent_id, error: "ese día la persona no tenía asignación: el cambio lo hace Administración" }); continue; }   // el líder no crea días pasados
+            if (est2 || !(marca || vuelve)) { out.push({ agent_id, error: "en días anteriores el líder solo puede cambiar el Estado (trabaja, ausencia, incapacidad o vacaciones)" }); continue; }
+            if (marca && !AUSENCIAS.has(prev.estado)) {   // pasar un día trabajado a ausencia: solo si ese día no hubo gestiones
+              let n = 0; try { n = Number(await rpc("var_gestiones_dia", { p_agent_id: agent_id, p_fecha: fecha })) || 0; } catch (_e) { n = -1; }
+              if (n !== 0) { out.push({ agent_id, error: n > 0 ? `ese día la persona registró ${n} gestiones: el cambio de Estado lo hace Administración` : "no fue posible verificar las gestiones de ese día; intenta de nuevo" }); continue; }
+            }
+            turno = prev.turno; firma = prev.lider_uid;                        // el día conserva su turno y su líder
+          }
           if (turno !== "M" && turno !== "T") { out.push({ agent_id, error: "turno inválido" }); continue; }
-          try { const id = await rpc("var_asignar", { p_fecha: fecha, p_agent_id: agent_id, p_turno: turno, p_estado: est, p_lider: lider, p_actor: uid, p_es_na: esNa }); out.push({ agent_id, id }); }
+          try { const id = await rpc("var_asignar", { p_fecha: fecha, p_agent_id: agent_id, p_turno: turno, p_estado: est, p_lider: firma, p_actor: uid, p_es_na: esNa, p_estado2: est2, p_cambio_hh: cambio }); out.push({ agent_id, id }); }
           catch (e: any) { out.push({ agent_id, error: e.message, conflicto: e.pg === "23505" }); }
         }
         const conflicto = out.some((o) => o.conflicto);
-        // Réplica revisada (029): quien guarda confirma las filas replicadas que no cambiaron
-        await fetch(`${SURL}/rest/v1/var_asignacion?fecha=eq.${fecha}&vigente=is.true&replicada=is.true`, { method: "PATCH", headers: { ...DBH, Prefer: "return=minimal" }, body: JSON.stringify({ revisada_por: uid, revisada_en: new Date().toISOString() }) }).catch(() => {});
+        // Réplica revisada (029): quien guarda confirma las filas replicadas que no cambiaron (no aplica al ajuste puntual de un día anterior)
+        if (!pasadoLider) await fetch(`${SURL}/rest/v1/var_asignacion?fecha=eq.${fecha}&vigente=is.true&replicada=is.true`, { method: "PATCH", headers: { ...DBH, Prefer: "return=minimal" }, body: JSON.stringify({ revisada_por: uid, revisada_en: new Date().toISOString() }) }).catch(() => {});
         return json({ ok: !out.some((o) => o.error), resultados: out }, conflicto ? 409 : 200);
       }
 
